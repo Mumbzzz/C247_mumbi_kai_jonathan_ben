@@ -14,3 +14,4 @@
 ## Repo Notes:
 - No models/ folder from emg2qwerty, because those are large files.
 - `Playground_` folders are 
+- The dataset is quite a large folder. I've added it to `.gitignore` for now.
