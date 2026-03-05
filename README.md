@@ -14,4 +14,5 @@
 ## Repo Notes:
 - No models/ folder from emg2qwerty, because those are large files.
 - `Playground_` folders are 
-- The dataset is quite a large folder. I've added it to `.gitignore` for now.
+- The dataset is quite a large folder (data/). I've added `*.hdf5` to `.gitignore` for now. I think its best to manually add them into your local workspace.
+  - https://ucla.box.com/s/3xc4nwpfjfpo6ydjs94t0v2kuq37d5eg
