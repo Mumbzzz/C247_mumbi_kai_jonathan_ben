@@ -1,0 +1,2 @@
+# Large checkpoint files.
+/checkpoints/*.pt
