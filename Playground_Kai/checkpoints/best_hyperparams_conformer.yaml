@@ -1,17 +1,17 @@
-lr: 0.00014661315715745895
-weight_decay: 0.014940094838388169
-d_model: 128
+lr: 0.0008453241881083158
+weight_decay: 0.02095814679480875
+d_model: 256
 num_heads: 4
 num_layers: 2
-conv_kernel_size: 15
-dropout: 0.32568240791798503
-trial_val_cer: 86.5308
+conv_kernel_size: 31
+dropout: 0.11692790270649321
+trial_val_cer: 33.3186
 search_mode: two-phase
 search_phase_found: F1
-num_coarse_trials: 20
-num_fine_trials: 32
-coarse_epochs: 10
-fine_epochs: 10
-num_trial_sessions: 4
+num_coarse_trials: 25
+num_fine_trials: 45
+coarse_epochs: 15
+fine_epochs: 15
+num_trial_sessions: 8
 fine_shrink: 3.0
-tuned_at: '2026-03-06 01:47:05'
+tuned_at: '2026-03-06 08:49:49'
