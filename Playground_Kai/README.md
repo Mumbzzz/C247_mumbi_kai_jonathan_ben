@@ -21,26 +21,51 @@ UCLA Winter 2026
 
 # Hyperparam optimizer
 
-### `--trial-timeout` (default: 180s)
-Each trial is capped at `--trial-timeout` seconds. Trials that exceed the limit are stopped early, still counted toward rankings, and tagged `[timeout]` in the results table. Pass `--trial-timeout 0` to disable the cap entirely.
+Default mode is **two-phase**: a broad coarse search followed by a focused fine search around the top-K coarse configs. 
+
+Common implementation:
+`.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --coarse-trials 20 --coarse-epochs 10 --fine-trials 15 --fine-epochs 10 --trial-sessions 4 --early-stopping-patience 10`
+
+
+Use `--search-mode coarse-only` for the old single-phase random search.
+
+## Key flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--search-mode` | `two-phase` | `two-phase` or `coarse-only` |
+| `--coarse-trials` | 20 | Configs evaluated in coarse phase (`--num-trials` is an alias) |
+| `--coarse-epochs` | 8 | Epochs per coarse proxy run (`--trial-epochs` is an alias) |
+| `--fine-trials` | 10 | Configs evaluated per fine-phase anchor |
+| `--fine-epochs` | 15 | Epochs per fine proxy run |
+| `--fine-top-k` | 3 | Top coarse configs used as fine anchors |
+| `--fine-shrink` | 3.0 | Log-scale shrink factor for fine bounds (higher = tighter) |
+| `--confirm-epochs` | 0 (off) | Re-run overall best with N more epochs before saving |
+| `--early-stopping-patience` | 0 (off) | Stop trial after N non-improving epochs |
+| `--trial-timeout` | 180s | Per-trial wall-clock cap (0 = disable) |
+| `--trial-sessions` | 5 | Training sessions per trial (max 16) |
 
 ## RNN
-- Quick test: 5 trials, 5 epochs each, 3 sessions
-  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --num-trials 15 --trial-epochs 10 --trial-sessions 4`
-- Full search (recommended overnight)
-  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --num-trials 50 --trial-epochs 10 --trial-sessions 5`
-- With custom timeout (e.g. 300s per trial)
-  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --num-trials 50 --trial-epochs 10 --trial-sessions 5 --trial-timeout 300`
+
+- Quick two-phase search
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --coarse-trials 10 --coarse-epochs 5 --fine-trials 5 --trial-sessions 4`
+- Full two-phase search (recommended overnight)
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --coarse-trials 20 --fine-trials 10 --fine-top-k 3 --trial-sessions 5`
+- Coarse-only (classic random search)
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --search-mode coarse-only --num-trials 50 --trial-epochs 10 --trial-sessions 5`
+- Add early stopping and confirmation run
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model rnn --early-stopping-patience 3 --confirm-epochs 20 --trial-sessions 5`
 - Train with best found config
   - `.\.venv\Scripts\python.exe -m Playground_Kai.train --model rnn --from-hyperparams Playground_Kai\checkpoints\best_hyperparams_rnn.yaml`
 
 ## Conformer
-- Quick test: 5 trials, 5 epochs each, 3 sessions
-  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --num-trials 15 --trial-epochs 10 --trial-sessions 4`
-- Full search (recommended overnight)
-  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --num-trials 50 --trial-epochs 10 --trial-sessions 5`
-- With custom timeout (e.g. 300s per trial)
-  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --num-trials 50 --trial-epochs 10 --trial-sessions 5 --trial-timeout 300`
+
+- Quick two-phase search
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --coarse-trials 10 --coarse-epochs 5 --fine-trials 5 --trial-sessions 4`
+- Full two-phase search (recommended overnight)
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --coarse-trials 20 --fine-trials 10 --fine-top-k 3 --trial-sessions 5`
+- Coarse-only (classic random search)
+  - `.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --search-mode coarse-only --num-trials 50 --trial-epochs 10 --trial-sessions 5`
 - Train with best found config
   - `.\.venv\Scripts\python.exe -m Playground_Kai.train --model conformer --from-hyperparams Playground_Kai\checkpoints\best_hyperparams_conformer.yaml`
 - ⚠️ Do NOT use --test-only with full sessions (self-attention is O(T²) — use --window-length 8000)

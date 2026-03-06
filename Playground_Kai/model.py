@@ -23,6 +23,7 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torchaudio.models import Conformer as TorchAudioConformer
 
 # Ensure workspace root is on sys.path so `emg2qwerty` is importable
 _ROOT = Path(__file__).resolve().parent.parent
@@ -138,103 +139,6 @@ class RNNEncoder(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Conformer building blocks
-# ---------------------------------------------------------------------------
-
-class _ConformerFeedForward(nn.Module):
-    """Pre-norm macaron feed-forward sub-block (half-step residual)."""
-
-    def __init__(self, d_model: int, ff_dim: int, dropout: float) -> None:
-        super().__init__()
-        self.norm = nn.LayerNorm(d_model)
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, ff_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(ff_dim, d_model),
-            nn.Dropout(dropout),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + 0.5 * self.ff(self.norm(x))
-
-
-class _ConformerConvModule(nn.Module):
-    """Conformer convolution sub-module.
-
-    LayerNorm → Pointwise-Conv×2 (GLU) → Depthwise-Conv1d → BatchNorm → SiLU
-    → Pointwise-Conv → Dropout, with a skip connection.
-    """
-
-    def __init__(self, d_model: int, kernel_size: int, dropout: float) -> None:
-        super().__init__()
-        assert kernel_size % 2 == 1, "conv_kernel_size must be odd"
-        self.norm = nn.LayerNorm(d_model)
-        self.pw1 = nn.Linear(d_model, 2 * d_model)
-        self.dw_conv = nn.Conv1d(
-            d_model, d_model,
-            kernel_size=kernel_size,
-            padding=kernel_size // 2,
-            groups=d_model,
-        )
-        self.bn = nn.BatchNorm1d(d_model)
-        self.act = nn.SiLU()
-        self.pw2 = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        residual = x
-        x = self.norm(x)                      # (T, N, d_model)
-        x = self.pw1(x)                       # (T, N, 2 * d_model)
-        x = F.glu(x, dim=-1)                  # (T, N, d_model) via GLU gate
-        T, N, C = x.shape
-        x = x.permute(1, 2, 0)               # (N, d_model, T)
-        x = self.dw_conv(x)                   # (N, d_model, T)
-        x = self.bn(x)
-        x = self.act(x)
-        x = x.permute(2, 0, 1)               # (T, N, d_model)
-        x = self.pw2(x)
-        x = self.dropout(x)
-        return residual + x
-
-
-class _ConformerBlock(nn.Module):
-    """One Conformer block: ½FF → MHSA → ConvModule → ½FF → LayerNorm."""
-
-    def __init__(
-        self,
-        d_model: int,
-        num_heads: int,
-        ff_dim: int,
-        conv_kernel_size: int,
-        dropout: float,
-    ) -> None:
-        super().__init__()
-        self.ff1 = _ConformerFeedForward(d_model, ff_dim, dropout)
-        self.attn_norm = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(
-            embed_dim=d_model,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=False,  # TNC convention (seq, batch, embed)
-        )
-        self.attn_dropout = nn.Dropout(dropout)
-        self.conv = _ConformerConvModule(d_model, conv_kernel_size, dropout)
-        self.ff2 = _ConformerFeedForward(d_model, ff_dim, dropout)
-        self.final_norm = nn.LayerNorm(d_model)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.ff1(x)
-        residual = x
-        normed = self.attn_norm(x)
-        attn_out, _ = self.attn(normed, normed, normed)
-        x = residual + self.attn_dropout(attn_out)
-        x = self.conv(x)
-        x = self.ff2(x)
-        return self.final_norm(x)
-
-
-# ---------------------------------------------------------------------------
 # Conformer encoder
 # ---------------------------------------------------------------------------
 
@@ -243,7 +147,7 @@ class ConformerEncoder(nn.Module):
 
     Drop-in replacement for ``RNNEncoder``: identical preprocessing front-end
     (SpectrogramNorm → MultiBandRotationInvariantMLP) and classification head,
-    but the temporal encoder is a stack of Conformer blocks instead of a
+    but the temporal encoder is ``torchaudio.models.Conformer`` instead of a
     BiLSTM.  Each block combines local depthwise convolution with global
     multi-head self-attention, outperforming both TDS-Conv and BiLSTM on
     tasks with both local and long-range temporal structure.
@@ -252,8 +156,12 @@ class ConformerEncoder(nn.Module):
 
         SpectrogramNorm → MultiBandRotationInvariantMLP → Flatten
         → Linear (input_proj) → Sinusoidal PE
-        → N × ConformerBlock
+        → torchaudio.models.Conformer (N blocks)
         → Linear (head) → LogSoftmax
+
+    ``torchaudio.models.Conformer`` is batch-first (NTC); inputs are transposed
+    around the call and transposed back, preserving TNC convention throughout
+    the rest of the module.
 
     .. note:: Self-attention is O(T²).  Whole-session test sequences (~40k
         frames) will OOM.  At test time use a finite ``window_length`` or
@@ -302,18 +210,15 @@ class ConformerEncoder(nn.Module):
         rnn_in = self.NUM_BANDS * list(mlp_features)[-1]  # e.g. 768
         self.input_proj = nn.Linear(rnn_in, d_model)
 
-        # --- Conformer blocks ---
-        ff_dim = 4 * d_model  # standard Conformer expansion ratio
-        self.blocks = nn.ModuleList([
-            _ConformerBlock(
-                d_model=d_model,
-                num_heads=num_heads,
-                ff_dim=ff_dim,
-                conv_kernel_size=conv_kernel_size,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
+        # --- Conformer blocks (via torchaudio) ---
+        self.conformer = TorchAudioConformer(
+            input_dim=d_model,
+            num_heads=num_heads,
+            ffn_dim=4 * d_model,   # standard 4× expansion ratio
+            num_layers=num_layers,
+            depthwise_conv_kernel_size=conv_kernel_size,
+            dropout=dropout,
+        )
 
         # --- Classification head ---
         self.head = nn.Linear(d_model, charset().num_classes)
@@ -345,9 +250,12 @@ class ConformerEncoder(nn.Module):
         x = self.mlp(x)               # (T, N, 2, mlp_features[-1])
         x = x.flatten(start_dim=2)    # (T, N, 2 * mlp_features[-1])
         x = self.input_proj(x)        # (T, N, d_model)
-        T = x.shape[0]
+        T, N = x.shape[0], x.shape[1]
         x = x + self._sinusoidal_pe(T, x.shape[2], x.device)
-        for block in self.blocks:
-            x = block(x)              # (T, N, d_model)
+        # torchaudio.Conformer is batch-first (N, T, D); transpose around the call
+        x = x.transpose(0, 1)         # (N, T, d_model)
+        lengths = torch.full((N,), T, dtype=torch.long, device=x.device)
+        x, _ = self.conformer(x, lengths)  # (N, T, d_model)
+        x = x.transpose(0, 1)         # (T, N, d_model)
         x = self.head(x)              # (T, N, num_classes)
         return F.log_softmax(x, dim=-1)
