@@ -139,6 +139,7 @@ def get_dataloaders(
     padding: tuple[int, int] = (1800, 200),
     batch_size: int = 32,
     num_workers: int = 0,
+    test_window_length: Optional[int] = None,
 ) -> dict[str, DataLoader]:
     """Build train/val/test DataLoaders from the single_user split config.
 
@@ -192,13 +193,13 @@ def get_dataloaders(
         for p in session_paths["val"]
     ])
 
-    # Test: feed entire session at once — no windowing, no padding
+    # Test: whole session by default (RNN); windowed when test_window_length is set (Conformer)
     test_dataset = ConcatDataset([
         WindowedEMGDataset(
             hdf5_path=p,
-            window_length=None,
+            window_length=test_window_length,
             stride=None,
-            padding=(0, 0),
+            padding=(0, 0) if test_window_length is None else padding,
             jitter=False,
             transform=eval_transform,
         )

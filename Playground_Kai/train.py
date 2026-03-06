@@ -14,7 +14,7 @@ Key flags (all have defaults, so a bare invocation will start training):
     --num-workers    DataLoader workers          (default: 0, safe on Windows)
 
 The best checkpoint (lowest val CER) is saved to
-    Playground_Kai/checkpoints/best.pt
+    Playground_Kai/checkpoints/best_{rnn,conformer}.pt
 and automatically loaded for the final test evaluation.
 """
 
@@ -43,7 +43,7 @@ from emg2qwerty.decoder import CTCGreedyDecoder
 from emg2qwerty.metrics import CharacterErrorRates
 
 from Playground_Kai.data_utils import get_dataloaders
-from Playground_Kai.model import RNNEncoder
+from Playground_Kai.model import RNNEncoder, ConformerEncoder
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,8 @@ def parse_args() -> argparse.Namespace:
         print(f"Loaded hyperparameters from {_pre_args.from_hyperparams}")
         _hp_display = ", ".join(
             f"{k}={v}" for k, v in _hp.items()
-            if k in {"lr", "hidden_size", "num_layers", "dropout", "weight_decay"}
+            if k in {"lr", "hidden_size", "num_layers", "dropout", "weight_decay",
+                     "d_model", "num_heads", "conv_kernel_size"}
         )
         print(f"  {_hp_display}")
 
@@ -214,12 +215,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--window-length", type=int, default=8000,
                    help="Raw EMG samples per training window (8000 = 4 s @ 2 kHz)")
     # Model — defaults overridden by --from-hyperparams if provided
+    p.add_argument("--model", choices=["rnn", "conformer"], default="rnn",
+                   help="Model architecture to train")
     p.add_argument("--hidden-size", type=int, default=_hp.get("hidden_size", 512),
-                   help="LSTM hidden size per direction")
+                   help="(RNN) LSTM hidden size per direction")
     p.add_argument("--num-layers", type=int, default=_hp.get("num_layers", 2),
-                   help="Number of stacked BiLSTM layers")
+                   help="Stacked BiLSTM layers (rnn) or Conformer blocks (conformer)")
     p.add_argument("--dropout", type=float, default=_hp.get("dropout", 0.2),
-                   help="Dropout between LSTM layers (ignored when num-layers=1)")
+                   help="Dropout probability")
+    # Conformer-specific — only used when --model conformer
+    p.add_argument("--d-model", type=int, default=_hp.get("d_model", 256),
+                   help="(Conformer) feature dimension; must be divisible by --num-heads")
+    p.add_argument("--num-heads", type=int, default=_hp.get("num_heads", 4),
+                   help="(Conformer) self-attention heads; must evenly divide --d-model")
+    p.add_argument("--conv-kernel-size", type=int, default=_hp.get("conv_kernel_size", 31),
+                   help="(Conformer) depthwise conv kernel size; must be odd")
     # Optimiser / scheduler — defaults overridden by --from-hyperparams if provided
     p.add_argument("--lr", type=float, default=_hp.get("lr", 5e-4),
                    help="Peak (post-warmup) learning rate for AdamW")
@@ -233,7 +243,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", type=Path, default=None,
                    help="Checkpoint .pt file to resume training from")
     p.add_argument("--test-only", action="store_true",
-                   help="Skip training: load best.pt and run test evaluation only")
+                   help="Skip training: load best_{model}.pt and run test evaluation only")
     p.add_argument("--from-hyperparams", type=Path, default=None,
                    help="YAML file of hyperparameters (e.g. from hyperparam_tuner.py)")
     return p.parse_args()
@@ -261,6 +271,7 @@ def main() -> None:
         window_length=args.window_length,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        test_window_length=args.window_length if args.model == "conformer" else None,
     )
     if args.test_only:
         print(f"  test batches  : {len(loaders['test'])}")
@@ -274,20 +285,32 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model = RNNEncoder(
-        in_features=528,        # (n_fft // 2 + 1) * electrode_channels = 33 * 16
-        mlp_features=(384,),
-        hidden_size=args.hidden_size,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-    ).to(device)
+    if args.model == "conformer":
+        model = ConformerEncoder(
+            in_features=528,
+            mlp_features=(384,),
+            d_model=args.d_model,
+            num_heads=args.num_heads,
+            num_layers=args.num_layers,
+            conv_kernel_size=args.conv_kernel_size,
+            dropout=args.dropout,
+        ).to(device)
+    else:
+        model = RNNEncoder(
+            in_features=528,        # (n_fft // 2 + 1) * electrode_channels = 33 * 16
+            mlp_features=(384,),
+            hidden_size=args.hidden_size,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+        ).to(device)
+    print(f"Model       : {args.model}")
     print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,}")
 
     # ------------------------------------------------------------------
     # Test-only shortcut: load checkpoint and evaluate, then exit
     # ------------------------------------------------------------------
     if args.test_only:
-        best_ckpt = args.checkpoint_dir / "best.pt"
+        best_ckpt = args.checkpoint_dir / f"best_{args.model}.pt"
         if not best_ckpt.exists():
             raise FileNotFoundError(
                 f"No checkpoint found at {best_ckpt}. "
@@ -379,7 +402,7 @@ def main() -> None:
         # Save checkpoint whenever val CER improves
         if val_cer < best_cer:
             best_cer = val_cer
-            ckpt_path = args.checkpoint_dir / "best.pt"
+            ckpt_path = args.checkpoint_dir / f"best_{args.model}.pt"
             # Convert Path objects to strings so torch.load(weights_only=True) works
             safe_args = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
             torch.save(
@@ -399,7 +422,7 @@ def main() -> None:
     # Test evaluation using the best checkpoint
     # ------------------------------------------------------------------
     print("\n--- Test Evaluation ---")
-    best_ckpt = args.checkpoint_dir / "best.pt"
+    best_ckpt = args.checkpoint_dir / f"best_{args.model}.pt"
     if best_ckpt.exists():
         ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model"])
