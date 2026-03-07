@@ -89,6 +89,13 @@ Use `--search-mode coarse-only` for the old single-phase random search.
 -  Voila.
 -  
 
+# WSL For Myself:
+- `python3 -m venv .venvWSL`
+- `source .venvWSL/bin/activate`
+- Install correct pytorch:
+  - `pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128`
+- Install packages with `pip install -r Playground_Kai/requirements.txt`
+
 
 ## [DEPRECATED] Anaconda
 - open Anaconda Prompt (command prompt with (base))

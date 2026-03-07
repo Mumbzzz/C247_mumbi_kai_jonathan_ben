@@ -372,6 +372,7 @@ def main() -> None:
     print("Tip: press Ctrl+C at any time to stop early and jump to test evaluation.\n")
 
     epoch_duration: float = 0.0  # updated each epoch for ETA estimation
+    train_start_time = time.perf_counter()
 
     for epoch in range(start_epoch, args.epochs):
         t0 = time.perf_counter()
@@ -428,10 +429,51 @@ def main() -> None:
         model.load_state_dict(ckpt["model"])
         print(f"Loaded best checkpoint from epoch {ckpt['epoch'] + 1}")
 
+    total_training_time = time.perf_counter() - train_start_time
+    total_time_str = time.strftime("%H:%M:%S", time.gmtime(total_training_time))
+
     _, test_metrics = evaluate(model, loaders["test"], device, decoder)
     print("Test metrics:")
     for k, v in test_metrics.items():
         print(f"  {k}: {v:.2f}%")
+
+    print(f"\nTotal training time: {total_time_str} ({total_training_time:.1f}s)")
+
+    # ------------------------------------------------------------------
+    # Append structured report to log file
+    # ------------------------------------------------------------------
+    log_path = args.checkpoint_dir / "log_model_training.txt"
+    run_timestamp = time.strftime("%Y%m%d_%H%Mhrs")
+    epochs_completed = epoch + 1 - start_epoch  # epoch is still in scope from loop
+
+    with open(log_path, "a") as log_f:
+        log_f.write("\n################### New Entry ###################\n")
+        log_f.write(f"Run timestamp   : {run_timestamp}\n")
+        log_f.write(f"Model           : {args.model}\n")
+        log_f.write(f"Device          : {device}\n")
+        log_f.write(f"Parameters      : {sum(p.numel() for p in model.parameters()):,}\n")
+        log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}\n")
+        log_f.write(f"Total train time: {total_time_str} ({total_training_time:.1f}s)\n")
+        log_f.write("--- Hyperparameters ---\n")
+        log_f.write(f"  lr={args.lr}\n")
+        log_f.write(f"  weight_decay={args.weight_decay}\n")
+        if args.model == "conformer":
+            log_f.write(f"  d_model={args.d_model}\n")
+            log_f.write(f"  num_heads={args.num_heads}\n")
+            log_f.write(f"  conv_kernel_size={args.conv_kernel_size}\n")
+        else:
+            log_f.write(f"  hidden_size={args.hidden_size}\n")
+        log_f.write(f"  num_layers={args.num_layers}\n")
+        log_f.write(f"  dropout={args.dropout}\n")
+        log_f.write(f"  batch_size={args.batch_size}\n")
+        log_f.write(f"  window_length={args.window_length}\n")
+        log_f.write("--- Results ---\n")
+        log_f.write(f"  Best val CER    : {best_cer:.2f}%\n")
+        for k, v in test_metrics.items():
+            log_f.write(f"  Test {k:<12}: {v:.2f}%\n")
+        log_f.write("#################################################\n")
+
+    print(f"Log appended to {log_path}")
 
 
 if __name__ == "__main__":
