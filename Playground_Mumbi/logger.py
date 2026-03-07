@@ -20,14 +20,14 @@ Typical usage
     # Call once per epoch during training:
     log_epoch(run_id, model="CNN", epoch=1,
               train_loss=0.42, val_loss=0.50,
-              train_cer=12.3, val_cer=15.7)
+              val_cer=15.7)
 
     # Call once after training completes:
     log_summary(run_id, model="CNN", epochs=50,
                 num_channels=8, sampling_rate_hz=2000,
                 train_fraction=0.5, input_type="spectrogram",
                 final_train_loss=0.12, final_val_loss=0.18,
-                final_train_cer=3.2, final_val_cer=5.8,
+                final_val_cer=5.8,
                 test_cer=6.1, training_time_sec=1823.4,
                 notes="baseline run")
 """
@@ -39,6 +39,66 @@ from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Team usage guide
+# ---------------------------------------------------------------------------
+#
+# VALID MODEL NAMES
+#   "CNN", "RNN", "CNN_LSTM", "Conformer"
+#   These must match exactly (case-sensitive) in every call below.
+#
+# IMPORTS
+#   from Playground_Mumbi.logger import log_epoch, log_summary, make_run_id
+#
+# STEP 1 — Build a run ID at the top of your training script, before the loop.
+#   run_id = make_run_id(
+#       model="RNN",
+#       num_channels=8,
+#       sampling_rate_hz=2000,
+#       train_fraction=0.8,
+#   )
+#   # Produces e.g. "RNN_8ch_2000hz_80pct_20260306_143022"
+#
+# STEP 2 — Log each epoch inside your training loop.
+#   for epoch in range(1, epochs + 1):
+#       # ... train / eval ...
+#       log_epoch(run_id, model="RNN", epoch=epoch,
+#                 train_loss=train_loss, val_loss=val_loss,
+#                 val_cer=val_cer)
+#
+# STEP 3 — Log a summary row after test evaluation completes.
+#   log_summary(run_id, model="RNN", epochs=epochs,
+#               num_channels=8, sampling_rate_hz=2000,
+#               train_fraction=0.8, input_type="spectrogram",
+#               final_train_loss=train_loss, final_val_loss=val_loss,
+#               final_val_cer=val_cer,
+#               test_cer=test_cer, training_time_sec=elapsed,
+#               notes="baseline")
+#
+# NOTES FIELD CONVENTIONS
+#   Architecture comparison runs  →  notes="arch_comparison"
+#   Ablation runs (vary one thing) →  notes="ablation_<what_you_varied>"
+#   e.g. notes="ablation_train_fraction", notes="ablation_channels"
+#
+# EXAMPLE — training-fraction ablation loop
+#   import time
+#   for frac in [0.25, 0.50, 0.75, 1.0]:
+#       run_id = make_run_id("CNN", num_channels=8,
+#                            sampling_rate_hz=2000, train_fraction=frac)
+#       t0 = time.perf_counter()
+#       for epoch in range(1, epochs + 1):
+#           # ... train / eval ...
+#           log_epoch(run_id, "CNN", epoch,
+#                     train_loss, val_loss, val_cer)
+#       log_summary(run_id, model="CNN", epochs=epochs,
+#                   num_channels=8, sampling_rate_hz=2000,
+#                   train_fraction=frac, input_type="spectrogram",
+#                   final_train_loss=train_loss, final_val_loss=val_loss,
+#                   final_val_cer=val_cer,
+#                   test_cer=test_cer, training_time_sec=time.perf_counter() - t0,
+#                   notes="ablation_train_fraction")
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
@@ -47,7 +107,7 @@ _WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 _RESULTS_DIR = _WORKSPACE_ROOT / "results"
 
 # Valid model names accepted by this logger
-_VALID_MODELS = {"CNN", "RNN", "CNN_LSTM"}
+_VALID_MODELS = {"CNN", "RNN", "CNN_LSTM", "Conformer"}
 
 # ---------------------------------------------------------------------------
 # Column definitions
@@ -64,7 +124,6 @@ _SUMMARY_COLUMNS = [
     "input_type",
     "final_train_loss",
     "final_val_loss",
-    "final_train_cer",
     "final_val_cer",
     "test_cer",
     "training_time_sec",
@@ -76,7 +135,6 @@ _CURVES_COLUMNS = [
     "epoch",
     "train_loss",
     "val_loss",
-    "train_cer",
     "val_cer",
 ]
 
@@ -94,7 +152,7 @@ def _csv_path(model: str, kind: str) -> Path:
     """Return the CSV path for *model* and *kind* ('summary' or 'curves').
 
     Args:
-        model: One of 'CNN', 'RNN', 'CNN_LSTM'.
+        model: One of 'CNN', 'RNN', 'CNN_LSTM', 'Conformer'.
         kind:  Either 'summary' or 'curves'.
 
     Returns:
@@ -165,7 +223,6 @@ def log_epoch(
     epoch: int,
     train_loss: float,
     val_loss: float,
-    train_cer: float,
     val_cer: float,
 ) -> None:
     """Append one epoch's training curve values to the curves CSV.
@@ -175,11 +232,10 @@ def log_epoch(
 
     Args:
         run_id:     Unique run identifier (see :func:`make_run_id`).
-        model:      Model name — 'CNN', 'RNN', or 'CNN_LSTM'.
+        model:      Model name — 'CNN', 'RNN', 'CNN_LSTM', or 'Conformer'.
         epoch:      Epoch number (1-indexed recommended).
         train_loss: Mean training CTC loss for this epoch.
         val_loss:   Mean validation CTC loss for this epoch.
-        train_cer:  Training character error rate (%) for this epoch.
         val_cer:    Validation character error rate (%) for this epoch.
     """
     row = {
@@ -187,7 +243,6 @@ def log_epoch(
         "epoch":      epoch,
         "train_loss": train_loss,
         "val_loss":   val_loss,
-        "train_cer":  train_cer,
         "val_cer":    val_cer,
     }
     _append_row(_csv_path(model, "curves"), _CURVES_COLUMNS, row)
@@ -203,7 +258,6 @@ def log_summary(
     input_type: str,
     final_train_loss: float,
     final_val_loss: float,
-    final_train_cer: float,
     final_val_cer: float,
     test_cer: float,
     training_time_sec: float,
@@ -216,7 +270,7 @@ def log_summary(
 
     Args:
         run_id:             Unique run identifier (see :func:`make_run_id`).
-        model:              Model name — 'CNN', 'RNN', or 'CNN_LSTM'.
+        model:              Model name — 'CNN', 'RNN', 'CNN_LSTM', or 'Conformer'.
         epochs:             Total number of training epochs completed.
         num_channels:       Number of EMG electrode channels.
         sampling_rate_hz:   EMG sampling rate in Hz.
@@ -225,7 +279,6 @@ def log_summary(
                             e.g. 'spectrogram' or 'raw'.
         final_train_loss:   Training CTC loss at the last epoch.
         final_val_loss:     Validation CTC loss at the last epoch.
-        final_train_cer:    Training CER (%) at the last epoch.
         final_val_cer:      Validation CER (%) at the last epoch.
         test_cer:           CER (%) on the held-out test set.
         training_time_sec:  Wall-clock training duration in seconds.
@@ -242,7 +295,6 @@ def log_summary(
         "input_type":        input_type,
         "final_train_loss":  final_train_loss,
         "final_val_loss":    final_val_loss,
-        "final_train_cer":   final_train_cer,
         "final_val_cer":     final_val_cer,
         "test_cer":          test_cer,
         "training_time_sec": training_time_sec,
