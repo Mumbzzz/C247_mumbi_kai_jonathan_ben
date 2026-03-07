@@ -1,10 +1,10 @@
 """Shared experiment logging utility for the C247 team.
 
 Writes experiment results to two CSV files per model architecture:
-    results/results_summary_{MODEL}.csv  — one row per run, scalar metrics
-    results/results_curves_{MODEL}.csv   — one row per epoch, training curves
+    Playground_Mumbi/results/results_summary_{MODEL}.csv  — one row per run, scalar metrics
+    Playground_Mumbi/results/results_curves_{MODEL}.csv   — one row per epoch, training curves
 
-The results/ directory is created at the workspace root automatically.
+The Playground_Mumbi/results/ directory is created automatically.
 
 Typical usage
 -------------
@@ -102,9 +102,8 @@ from pathlib import Path
 # Paths
 # ---------------------------------------------------------------------------
 
-# Workspace root is two levels above this file (…/C247_mumbikaijonathanben/)
-_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
-_RESULTS_DIR = _WORKSPACE_ROOT / "results"
+# Results live inside the Playground_Mumbi package directory
+_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 # Valid model names accepted by this logger
 _VALID_MODELS = {"CNN", "RNN", "CNN_LSTM", "Conformer"}
@@ -227,7 +226,7 @@ def log_epoch(
 ) -> None:
     """Append one epoch's training curve values to the curves CSV.
 
-    Creates ``results/results_curves_{model}.csv`` with a header row on the
+    Creates ``Playground_Mumbi/results/results_curves_{model}.csv`` with a header row on the
     first call; subsequent calls append without re-writing the header.
 
     Args:
@@ -265,7 +264,7 @@ def log_summary(
 ) -> None:
     """Append a run summary row to the summary CSV.
 
-    Creates ``results/results_summary_{model}.csv`` with a header row on the
+    Creates ``Playground_Mumbi/results/results_summary_{model}.csv`` with a header row on the
     first call; subsequent calls append without re-writing the header.
 
     Args:
