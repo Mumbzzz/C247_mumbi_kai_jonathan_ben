@@ -1,14 +1,14 @@
 """Shared experiment logging utility for the C247 team.
 
 Writes experiment results to two CSV files per model architecture:
-    Playground_Mumbi/results/results_summary_{MODEL}.csv  — one row per run, scalar metrics
-    Playground_Mumbi/results/results_curves_{MODEL}.csv   — one row per epoch, training curves
+    results/results_summary_{MODEL}.csv  — one row per run, scalar metrics
+    results/results_curves_{MODEL}.csv   — one row per epoch, training curves
 
-The Playground_Mumbi/results/ directory is created automatically.
+The results/ directory is created automatically.
 
 Typical usage
 -------------
-    from Playground_Mumbi.logger import log_epoch, log_summary, make_run_id
+    from scripts.logger import log_epoch, log_summary, make_run_id
 
     run_id = make_run_id(
         model="CNN",
@@ -43,11 +43,12 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 #
 # VALID MODEL NAMES
-#   "CNN", "RNN", "CNN_LSTM", "Conformer"
-#   These must match exactly (case-sensitive) in every call below.
+#   "CNN", "RNN", "CNN_LSTM", "CONFORMER"
+#   Model names are normalised to uppercase internally, so "conformer",
+#   "Conformer", and "CONFORMER" all produce the same CSV filenames.
 #
 # IMPORTS
-#   from Playground_Mumbi.logger import log_epoch, log_summary, make_run_id
+#   from scripts.logger import log_epoch, log_summary, make_run_id
 #
 # STEP 1 — Build a run ID at the top of your training script, before the loop.
 #   run_id = make_run_id(
@@ -102,11 +103,11 @@ from pathlib import Path
 # Paths
 # ---------------------------------------------------------------------------
 
-# Results live inside the Playground_Mumbi package directory
-_RESULTS_DIR = Path(__file__).resolve().parent / "results"
+# Results live inside the workspace root results/ directory
+_RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
-# Valid model names accepted by this logger
-_VALID_MODELS = {"CNN", "RNN", "CNN_LSTM", "Conformer"}
+# Valid model names accepted by this logger (all uppercase after normalisation)
+_VALID_MODELS = {"CNN", "RNN", "CNN_LSTM", "CONFORMER"}
 
 # ---------------------------------------------------------------------------
 # Column definitions
@@ -151,7 +152,7 @@ def _csv_path(model: str, kind: str) -> Path:
     """Return the CSV path for *model* and *kind* ('summary' or 'curves').
 
     Args:
-        model: One of 'CNN', 'RNN', 'CNN_LSTM', 'Conformer'.
+        model: One of 'CNN', 'RNN', 'CNN_LSTM', 'CONFORMER' (case-insensitive).
         kind:  Either 'summary' or 'curves'.
 
     Returns:
@@ -160,6 +161,7 @@ def _csv_path(model: str, kind: str) -> Path:
     Raises:
         ValueError: If *model* is not a recognised model name.
     """
+    model = model.upper()
     if model not in _VALID_MODELS:
         raise ValueError(
             f"Unknown model '{model}'. Expected one of: {sorted(_VALID_MODELS)}"
@@ -210,6 +212,7 @@ def make_run_id(
     Returns:
         Run ID string.
     """
+    model = model.upper()
     if timestamp is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pct = int(round(train_fraction * 100))
@@ -226,12 +229,12 @@ def log_epoch(
 ) -> None:
     """Append one epoch's training curve values to the curves CSV.
 
-    Creates ``Playground_Mumbi/results/results_curves_{model}.csv`` with a header row on the
+    Creates ``results/results_curves_{model}.csv`` with a header row on the
     first call; subsequent calls append without re-writing the header.
 
     Args:
         run_id:     Unique run identifier (see :func:`make_run_id`).
-        model:      Model name — 'CNN', 'RNN', 'CNN_LSTM', or 'Conformer'.
+        model:      Model name — 'CNN', 'RNN', 'CNN_LSTM', or 'CONFORMER' (case-insensitive).
         epoch:      Epoch number (1-indexed recommended).
         train_loss: Mean training CTC loss for this epoch.
         val_loss:   Mean validation CTC loss for this epoch.
@@ -264,12 +267,12 @@ def log_summary(
 ) -> None:
     """Append a run summary row to the summary CSV.
 
-    Creates ``Playground_Mumbi/results/results_summary_{model}.csv`` with a header row on the
+    Creates ``results/results_summary_{model}.csv`` with a header row on the
     first call; subsequent calls append without re-writing the header.
 
     Args:
         run_id:             Unique run identifier (see :func:`make_run_id`).
-        model:              Model name — 'CNN', 'RNN', 'CNN_LSTM', or 'Conformer'.
+        model:              Model name — 'CNN', 'RNN', 'CNN_LSTM', or 'CONFORMER' (case-insensitive).
         epochs:             Total number of training epochs completed.
         num_channels:       Number of EMG electrode channels.
         sampling_rate_hz:   EMG sampling rate in Hz.
@@ -283,6 +286,7 @@ def log_summary(
         training_time_sec:  Wall-clock training duration in seconds.
         notes:              Optional free-text annotation for this run.
     """
+    model = model.upper()
     row = {
         "run_id":            run_id,
         "timestamp":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

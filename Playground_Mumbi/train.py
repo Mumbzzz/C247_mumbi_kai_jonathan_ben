@@ -52,7 +52,7 @@ from emg2qwerty.modules import (
 )
 
 from Playground_Mumbi.data_utils import get_dataloaders
-from Playground_Mumbi.logger import log_epoch, log_summary, make_run_id
+from scripts.logger import log_epoch, log_summary, make_run_id
 
 
 # ---------------------------------------------------------------------------

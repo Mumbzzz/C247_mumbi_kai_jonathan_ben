@@ -21,7 +21,7 @@ UCLA_COLORS = ['#2D68C4', '#FFD100', '#003B5C', '#8BB8E8', '#00A5E0', '#005587']
 FRACTIONS_ORDERED = [0.10, 0.25, 0.50, 0.75, 1.00]
 FRACTION_LABELS   = {0.10: "10%", 0.25: "25%", 0.50: "50%", 0.75: "75%", 1.00: "100%"}
 
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
+RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
 PLOTS_DIR   = os.path.join(RESULTS_DIR, "training_fraction_ablation_plots")
 
 
