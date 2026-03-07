@@ -8,3 +8,19 @@ num_trial_epochs: 10
 num_trial_sessions: 4
 num_trials_run: 15
 tuned_at: '2026-03-05 17:54:30'
+
+# lr: 0.0009201228216232298
+# weight_decay: 0.00357574244637166
+# hidden_size: 768
+# num_layers: 1
+# dropout: 0.22210663399830005
+# trial_val_cer: 82.2331
+# search_mode: two-phase
+# search_phase_found: F2
+# num_coarse_trials: 25
+# num_fine_trials: 45
+# coarse_epochs: 15
+# fine_epochs: 15
+# num_trial_sessions: 8
+# fine_shrink: 3.0
+# tuned_at: '2026-03-07 06:20:37'

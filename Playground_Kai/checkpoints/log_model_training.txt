@@ -251,3 +251,48 @@ Test metrics:
   DER: 1.78%
   SER: 9.96%
 ################### End of Entry ###################
+################### New Entry ###################
+Run timestamp   : 20260307_0813hrs
+Model           : rnn
+Device          : cuda
+Parameters      : 10,007,971
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 01:51:24 (6684.9s)
+--- Hyperparameters ---
+  lr=0.0009201228216232298
+  weight_decay=0.00357574244637166
+  hidden_size=768
+  num_layers=1
+  dropout=0.22210663399830005
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 21.18%
+  Test CER         : 23.08%
+  Test IER         : 5.30%
+  Test DER         : 3.07%
+  Test SER         : 14.72%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260307_1231hrs
+Model           : rnn
+Device          : cuda
+Parameters      : 5,758,883
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 01:41:53 (6113.2s)
+--- Hyperparameters ---
+  lr=0.0004584197485106983
+  weight_decay=0.05407136503563504
+  hidden_size=512
+  num_layers=1
+  dropout=0.44212708840605874
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 18.99%
+  Test CER         : 18.93%
+  Test IER         : 4.30%
+  Test DER         : 1.84%
+  Test SER         : 12.79%
+#################################################
