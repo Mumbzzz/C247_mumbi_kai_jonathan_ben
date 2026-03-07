@@ -127,7 +127,7 @@ def get_session_paths(
         paths: list[Path] = []
         for entry in entries:
             session = entry["session"]
-            hdf5_path = data_root / f"{session}.hdf5"
+            hdf5_path = data_root / "89335547" / f"{session}.hdf5"
             if not hdf5_path.exists():
                 raise FileNotFoundError(f"HDF5 file not found: {hdf5_path}")
             paths.append(hdf5_path)
