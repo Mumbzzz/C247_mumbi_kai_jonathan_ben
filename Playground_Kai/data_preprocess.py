@@ -74,8 +74,10 @@ DEFAULT_CHANNELS: list[int] = list(range(0, 16, 2))  # [0, 2, 4, 6, 8, 10, 12, 1
 N_ELECTRODE_CHANNELS: int = len(DEFAULT_CHANNELS)    # 8 per band
 
 # Mel spectrogram parameters
-N_FFT: int = 64
-HOP_LENGTH: int = 8        # 8 ms at 1000 Hz → 125 Hz frame rate
+# N_FFT: int = 64
+N_FFT: int = 256 # Pad window to 256 for dense frequency sampling → 32 Mel bins between 20–450 Hz
+WIN_LENGTH: int = 64 # Keep 64-sample window for good time resolution (64 samples at 1000 Hz = 64 ms)
+HOP_LENGTH: int = 8        # (stride) 8 ms at 1000 Hz → 125 Hz frame rate
 N_MELS: int = 32
 MEL_FMIN: float = 20.0
 MEL_FMAX: float = 450.0
@@ -179,6 +181,7 @@ class MelSpectrogramTransform:
         self._mel = _TA.MelSpectrogram(
             sample_rate=SAMPLE_RATE,
             n_fft=N_FFT,
+            win_length=WIN_LENGTH, # Address bin extraction stretching bug by padding window to 256 while keeping 64-sample effective window length
             hop_length=HOP_LENGTH,
             n_mels=N_MELS,
             f_min=MEL_FMIN,
@@ -238,9 +241,10 @@ def build_preprocess_transform(
             # Temporal jitter before channel selection so all 16 raw channels
             # are aligned — the jitter only touches the time axis.
             TemporalAlignmentJitter(max_offset=120),
-            ChannelSelector(channels),
             # Per-band electrode rotation for rotational augmentation
             ForEach(RandomBandRotation(offsets=[-1, 0, 1])),
+            # Only downselect channels AFTER random rotation!!!
+            ChannelSelector(channels),
             TemporalFilter(),
             Decimator(),
             mel_transform,
