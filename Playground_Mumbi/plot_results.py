@@ -98,7 +98,7 @@ def plot_cer_vs_fraction(summary: pd.DataFrame, model: str) -> None:
 
     ax.plot(x, val_cers,  marker="o", color=UCLA_COLORS[0], linewidth=2,
             markersize=7, label="Val CER",  zorder=3)
-    ax.plot(x, test_cers, marker="s", color=UCLA_COLORS[4], linewidth=2,
+    ax.plot(x, test_cers, marker="s", color=UCLA_COLORS[1], linewidth=2,
             markersize=7, label="Test CER", zorder=3)
 
     # Annotate points
@@ -106,12 +106,12 @@ def plot_cer_vs_fraction(summary: pd.DataFrame, model: str) -> None:
         ax.annotate(f"{v:.1f}", (i, v), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=8, color=UCLA_COLORS[0])
         ax.annotate(f"{t:.1f}", (i, t), textcoords="offset points",
-                    xytext=(0, -14), ha="center", fontsize=8, color=UCLA_COLORS[4])
+                    xytext=(0, -14), ha="center", fontsize=8, color=UCLA_COLORS[1])
 
     # Elbow point
     elbow_idx = _find_elbow(fracs, val_cers, threshold=3.0)
     if elbow_idx is not None:
-        ax.axvline(x=elbow_idx, color=UCLA_COLORS[1], linestyle="--",
+        ax.axvline(x=elbow_idx, color=UCLA_COLORS[2], linestyle="--",
                    linewidth=1.5, label="Elbow (<3% marginal gain)", zorder=2)
         ax.annotate(
             f"Elbow\n{labels[elbow_idx]}",
