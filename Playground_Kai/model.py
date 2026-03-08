@@ -75,7 +75,6 @@ class RNNEncoder(nn.Module):
     """
 
     NUM_BANDS: int = 2
-    ELECTRODE_CHANNELS: int = 16
 
     def __init__(
         self,
@@ -84,14 +83,15 @@ class RNNEncoder(nn.Module):
         hidden_size: int = 512,
         num_layers: int = 2,
         dropout: float = 0.2,
+        electrode_channels: int = 16,
     ) -> None:
         super().__init__()
 
         # --- Preprocessing (reused from emg2qwerty) ---
 
-        # Per-channel batch normalisation over (T, N, 2, 16, freq)
+        # Per-channel batch normalisation over (T, N, 2, electrode_channels, freq)
         self.spec_norm = SpectrogramNorm(
-            channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS  # 32
+            channels=self.NUM_BANDS * electrode_channels
         )
 
         # Per-band, rotation-invariant MLP:
@@ -425,7 +425,6 @@ class ConformerEncoder(nn.Module):
     """
 
     NUM_BANDS: int = 2
-    ELECTRODE_CHANNELS: int = 16
 
     def __init__(
         self,
@@ -436,6 +435,7 @@ class ConformerEncoder(nn.Module):
         num_layers: int = 4,
         conv_kernel_size: int = 31,
         dropout: float = 0.1,
+        electrode_channels: int = 16,
     ) -> None:
         super().__init__()
         assert d_model % num_heads == 0, (
@@ -444,7 +444,7 @@ class ConformerEncoder(nn.Module):
 
         # --- Preprocessing (identical to RNNEncoder) ---
         self.spec_norm = SpectrogramNorm(
-            channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS  # 32
+            channels=self.NUM_BANDS * electrode_channels
         )
         self.mlp = MultiBandRotationInvariantMLP(
             in_features=in_features,

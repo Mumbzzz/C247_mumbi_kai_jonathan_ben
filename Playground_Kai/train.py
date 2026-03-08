@@ -44,6 +44,10 @@ from emg2qwerty.metrics import CharacterErrorRates
 
 from Playground_Kai.data_utils import get_dataloaders
 from Playground_Kai.model import RNNEncoder, ConformerEncoder
+from Playground_Kai.data_preprocess import (
+    IN_FEATURES as PREP_IN_FEATURES,
+    N_ELECTRODE_CHANNELS as PREP_N_CHANNELS,
+)
 from scripts.logger import log_epoch, log_summary, make_run_id
 
 
@@ -244,7 +248,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", type=Path, default=None,
                    help="Checkpoint .pt file to resume training from")
     p.add_argument("--test-only", action="store_true",
-                   help="Skip training: load best_{model}.pt and run test evaluation only")
+                   help="Skip training: load best_{model}_{in_features}.pt and run test evaluation only")
+    p.add_argument("--preprocess", action="store_true",
+                   help="Use the full preprocessing pipeline (notch + bandpass + decimation + Mel STFT) "
+                        "instead of the raw LogSpectrogram pipeline. "
+                        "Checkpoints from each pipeline are stored separately.")
     p.add_argument("--from-hyperparams", type=Path, default=None,
                    help="YAML file of hyperparameters (e.g. from hyperparam_tuner.py)")
     p.add_argument("--notes", type=str, default="",
@@ -264,6 +272,19 @@ def main() -> None:
 
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    # Derive input/output dimensions based on the preprocessing flag.
+    # Preprocessed pipeline: 8 channels/band × 32 Mel bins = 256 features.
+    # Raw pipeline:          16 channels/band × 33 STFT bins = 528 features.
+    in_features = PREP_IN_FEATURES if args.preprocess else 528
+    electrode_channels = PREP_N_CHANNELS if args.preprocess else 16
+    ckpt_stem = f"best_{args.model}_{in_features}"
+
+    # Logger metadata that differs between pipelines
+    _num_channels = electrode_channels * 2  # ×2 wrists
+    _sampling_rate = 1000 if args.preprocess else 2000
+    _input_type = "mel_spectrogram" if args.preprocess else "spectrogram"
+    print(f"Pipeline    : {'preprocessed (notch+bandpass+decimate+Mel)' if args.preprocess else 'raw (LogSpectrogram)'}")
+
     # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
@@ -275,6 +296,7 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         test_window_length=args.window_length if args.model == "conformer" else None,
+        preprocess=args.preprocess,
     )
     if args.test_only:
         print(f"  test batches  : {len(loaders['test'])}")
@@ -290,21 +312,23 @@ def main() -> None:
     # ------------------------------------------------------------------
     if args.model == "conformer":
         model = ConformerEncoder(
-            in_features=528,
+            in_features=in_features,
             mlp_features=(384,),
             d_model=args.d_model,
             num_heads=args.num_heads,
             num_layers=args.num_layers,
             conv_kernel_size=args.conv_kernel_size,
             dropout=args.dropout,
+            electrode_channels=electrode_channels,
         ).to(device)
     else:
         model = RNNEncoder(
-            in_features=528,        # (n_fft // 2 + 1) * electrode_channels = 33 * 16
+            in_features=in_features,
             mlp_features=(384,),
             hidden_size=args.hidden_size,
             num_layers=args.num_layers,
             dropout=args.dropout,
+            electrode_channels=electrode_channels,
         ).to(device)
     print(f"Model       : {args.model}")
     print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,}")
@@ -313,7 +337,7 @@ def main() -> None:
     # Test-only shortcut: load checkpoint and evaluate, then exit
     # ------------------------------------------------------------------
     if args.test_only:
-        best_ckpt = args.checkpoint_dir / f"best_{args.model}.pt"
+        best_ckpt = args.checkpoint_dir / f"{ckpt_stem}.pt"
         if not best_ckpt.exists():
             raise FileNotFoundError(
                 f"No checkpoint found at {best_ckpt}. "
@@ -324,23 +348,28 @@ def main() -> None:
         # Rebuild the model from the hyperparams that were used during training,
         # not from CLI defaults.  The checkpoint stores args as a plain dict.
         saved_args = ckpt.get("args", {})
+        saved_preprocess = saved_args.get("preprocess", False)
+        saved_in_features = PREP_IN_FEATURES if saved_preprocess else 528
+        saved_elec_ch = PREP_N_CHANNELS if saved_preprocess else 16
         if args.model == "conformer":
             model = ConformerEncoder(
-                in_features=528,
+                in_features=saved_in_features,
                 mlp_features=(384,),
                 d_model=int(saved_args.get("d_model", args.d_model)),
                 num_heads=int(saved_args.get("num_heads", args.num_heads)),
                 num_layers=int(saved_args.get("num_layers", args.num_layers)),
                 conv_kernel_size=int(saved_args.get("conv_kernel_size", args.conv_kernel_size)),
                 dropout=float(saved_args.get("dropout", args.dropout)),
+                electrode_channels=saved_elec_ch,
             ).to(device)
         else:
             model = RNNEncoder(
-                in_features=528,
+                in_features=saved_in_features,
                 mlp_features=(384,),
                 hidden_size=int(saved_args.get("hidden_size", args.hidden_size)),
                 num_layers=int(saved_args.get("num_layers", args.num_layers)),
                 dropout=float(saved_args.get("dropout", args.dropout)),
+                electrode_channels=saved_elec_ch,
             ).to(device)
         print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,} (from checkpoint args)")
 
@@ -361,8 +390,8 @@ def main() -> None:
         _train_fraction = _n_train / _n_total
         _run_id = make_run_id(
             model=_logger_model,
-            num_channels=32,
-            sampling_rate_hz=2000,
+            num_channels=saved_elec_ch * 2,
+            sampling_rate_hz=1000 if saved_preprocess else 2000,
             train_fraction=_train_fraction,
         )
         _notes = (args.notes + " " if args.notes else "") + "test_only"
@@ -370,10 +399,10 @@ def main() -> None:
             _run_id,
             model=_logger_model,
             epochs=saved_epoch + 1 if isinstance(saved_epoch, int) else 0,
-            num_channels=32,
-            sampling_rate_hz=2000,
+            num_channels=saved_elec_ch * 2,
+            sampling_rate_hz=1000 if saved_preprocess else 2000,
             train_fraction=_train_fraction,
-            input_type="spectrogram",
+            input_type="mel_spectrogram" if saved_preprocess else "spectrogram",
             final_train_loss=float("nan"),
             final_val_loss=float("nan"),
             final_val_cer=saved_cer,
@@ -437,8 +466,8 @@ def main() -> None:
     _train_fraction = _n_train / _n_total
     run_id = make_run_id(
         model=_logger_model,
-        num_channels=32,          # 16 electrodes × 2 wrists
-        sampling_rate_hz=2000,
+        num_channels=_num_channels,
+        sampling_rate_hz=_sampling_rate,
         train_fraction=_train_fraction,
     )
     # Sentinels — updated each epoch; used in log_summary even on early stop
@@ -480,7 +509,7 @@ def main() -> None:
         # Save checkpoint whenever val CER improves
         if val_cer < best_cer:
             best_cer = val_cer
-            ckpt_path = args.checkpoint_dir / f"best_{args.model}.pt"
+            ckpt_path = args.checkpoint_dir / f"{ckpt_stem}.pt"
             # Convert Path objects to strings so torch.load(weights_only=True) works
             safe_args = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
             torch.save(
@@ -500,7 +529,7 @@ def main() -> None:
     # Test evaluation using the best checkpoint
     # ------------------------------------------------------------------
     print("\n--- Test Evaluation ---")
-    best_ckpt = args.checkpoint_dir / f"best_{args.model}.pt"
+    best_ckpt = args.checkpoint_dir / f"{ckpt_stem}.pt"
     if best_ckpt.exists():
         ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model"])
@@ -517,14 +546,15 @@ def main() -> None:
     print(f"\nTotal training time: {total_time_str} ({total_training_time:.1f}s)")
 
     # --- Log summary to CSV ---
+    epochs_completed = epoch + 1 - start_epoch  # epoch is still in scope from loop
     log_summary(
         run_id,
         model=_logger_model,
         epochs=epochs_completed,
-        num_channels=32,
-        sampling_rate_hz=2000,
+        num_channels=_num_channels,
+        sampling_rate_hz=_sampling_rate,
         train_fraction=_train_fraction,
-        input_type="spectrogram",
+        input_type=_input_type,
         final_train_loss=_final_train_loss,
         final_val_loss=_final_val_loss,
         final_val_cer=_final_val_cer,
@@ -538,12 +568,12 @@ def main() -> None:
     # ------------------------------------------------------------------
     log_path = args.checkpoint_dir / "log_model_training.txt"
     run_timestamp = time.strftime("%Y%m%d_%H%Mhrs")
-    epochs_completed = epoch + 1 - start_epoch  # epoch is still in scope from loop
 
     with open(log_path, "a") as log_f:
         log_f.write("\n################### New Entry ###################\n")
         log_f.write(f"Run timestamp   : {run_timestamp}\n")
         log_f.write(f"Model           : {args.model}\n")
+        log_f.write(f"Pipeline        : {'preprocessed' if args.preprocess else 'raw (LogSpectrogram)'}\n")
         log_f.write(f"Device          : {device}\n")
         log_f.write(f"Parameters      : {sum(p.numel() for p in model.parameters()):,}\n")
         log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}\n")

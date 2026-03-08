@@ -37,6 +37,8 @@ from emg2qwerty.transforms import (
     ToTensor,
 )
 
+from Playground_Kai.data_preprocess import build_preprocess_transform
+
 
 # ---------------------------------------------------------------------------
 # Transform factories
@@ -140,6 +142,7 @@ def get_dataloaders(
     batch_size: int = 32,
     num_workers: int = 0,
     test_window_length: Optional[int] = None,
+    preprocess: bool = False,
 ) -> dict[str, DataLoader]:
     """Build train/val/test DataLoaders from the single_user split config.
 
@@ -166,8 +169,12 @@ def get_dataloaders(
         :class:`torch.utils.data.DataLoader` instances.
     """
     session_paths = get_session_paths(data_root=data_root, config_path=config_path)
-    train_transform = _build_train_transform()
-    eval_transform = _build_eval_transform()
+    if preprocess:
+        train_transform = build_preprocess_transform(augment=True)
+        eval_transform = build_preprocess_transform(augment=False)
+    else:
+        train_transform = _build_train_transform()
+        eval_transform = _build_eval_transform()
 
     train_dataset = ConcatDataset([
         WindowedEMGDataset(
@@ -246,6 +253,7 @@ def build_loaders_from_paths(
     padding: tuple[int, int] = (1800, 200),
     batch_size: int = 32,
     num_workers: int = 0,
+    preprocess: bool = False,
 ) -> dict[str, DataLoader]:
     """Build train and val DataLoaders from explicit session path lists.
 
@@ -265,8 +273,12 @@ def build_loaders_from_paths(
     Returns:
         Dict with keys ``'train'`` and ``'val'`` mapping to DataLoaders.
     """
-    train_transform = _build_train_transform()
-    eval_transform = _build_eval_transform()
+    if preprocess:
+        train_transform = build_preprocess_transform(augment=True)
+        eval_transform = build_preprocess_transform(augment=False)
+    else:
+        train_transform = _build_train_transform()
+        eval_transform = _build_eval_transform()
 
     train_dataset = ConcatDataset([
         WindowedEMGDataset(
