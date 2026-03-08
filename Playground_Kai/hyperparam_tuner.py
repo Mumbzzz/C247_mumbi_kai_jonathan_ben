@@ -62,6 +62,16 @@ from emg2qwerty.decoder import CTCGreedyDecoder
 
 from Playground_Kai.data_utils import build_loaders_from_paths, get_session_paths
 from Playground_Kai.model import RNNEncoder, ConformerEncoder
+# torch 2.5+ renamed the CUDA OOM exception to torch.AcceleratorError.
+# Build a tuple of all OOM-related exception types so we can catch either.
+_OOM_ERRORS: tuple[type[BaseException], ...] = (torch.cuda.OutOfMemoryError,)
+if hasattr(torch, "AcceleratorError"):
+    _OOM_ERRORS = _OOM_ERRORS + (torch.AcceleratorError,)  # type: ignore[attr-defined]
+
+from Playground_Kai.data_preprocess import (
+    IN_FEATURES as PREP_IN_FEATURES,
+    N_ELECTRODE_CHANNELS as PREP_N_CHANNELS,
+)
 from Playground_Kai.train import _lr_lambda, evaluate, train_one_epoch
 
 
@@ -161,6 +171,7 @@ def run_trial(
     model_type: str = "rnn",
     timeout_secs: float = float("inf"),
     early_stopping_patience: int = 0,
+    preprocess: bool = False,
 ) -> tuple[float, bool, int]:
     """Run one proxy training trial.
 
@@ -184,32 +195,38 @@ def run_trial(
     """
     torch.manual_seed(trial_idx)
 
+    in_features = PREP_IN_FEATURES if preprocess else 528
+    electrode_channels = PREP_N_CHANNELS if preprocess else 16
+
     loaders = build_loaders_from_paths(
         train_paths=train_paths,
         val_paths=val_paths,
         window_length=window_length,
         batch_size=batch_size,
+        preprocess=preprocess,
     )
 
     if model_type == "conformer":
         model = ConformerEncoder(
-            in_features=528,
+            in_features=in_features,
             mlp_features=(384,),
             d_model=config["d_model"],
             num_heads=config["num_heads"],
             num_layers=config["num_layers"],
             conv_kernel_size=config["conv_kernel_size"],
             dropout=config["dropout"],
+            electrode_channels=electrode_channels,
         ).to(device)
     else:
         # Dropout has no effect with a single-layer LSTM
         effective_dropout = config["dropout"] if config["num_layers"] > 1 else 0.0
         model = RNNEncoder(
-            in_features=528,
+            in_features=in_features,
             mlp_features=(384,),
             hidden_size=config["hidden_size"],
             num_layers=config["num_layers"],
             dropout=effective_dropout,
+            electrode_channels=electrode_channels,
         ).to(device)
 
     criterion = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
@@ -238,29 +255,52 @@ def run_trial(
     no_improve_streak = 0
     t_trial_start = time.perf_counter()
 
-    for _ in range(trial_epochs):
-        train_one_epoch(model, loaders["train"], optimizer, criterion, device, scheduler)
-        _, val_metrics = evaluate(model, loaders["val"], device, decoder)
-        val_cer = val_metrics["CER"]
-        epochs_run += 1
-        if val_cer < best_val_cer:
-            best_val_cer = val_cer
-            no_improve_streak = 0
-        else:
-            no_improve_streak += 1
+    try:
+        for _ in range(trial_epochs):
+            train_one_epoch(model, loaders["train"], optimizer, criterion, device, scheduler)
+            _, val_metrics = evaluate(model, loaders["val"], device, decoder)
+            val_cer = val_metrics["CER"]
+            epochs_run += 1
+            if val_cer < best_val_cer:
+                best_val_cer = val_cer
+                no_improve_streak = 0
+            else:
+                no_improve_streak += 1
 
-        # Early stopping (patience=0 means disabled)
-        if early_stopping_patience > 0 and no_improve_streak >= early_stopping_patience:
-            break
-        # Timeout checked between epochs — cannot interrupt mid-epoch safely.
-        if time.perf_counter() - t_trial_start > timeout_secs:
-            timed_out = True
-            break
+            # Early stopping (patience=0 means disabled)
+            if early_stopping_patience > 0 and no_improve_streak >= early_stopping_patience:
+                break
+            # Timeout checked between epochs — cannot interrupt mid-epoch safely.
+            if time.perf_counter() - t_trial_start > timeout_secs:
+                timed_out = True
+                break
 
-    # Release GPU memory before the next trial
-    del model
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
+    except _OOM_ERRORS as e:  # torch.cuda.OutOfMemoryError or torch.AcceleratorError (2.5+)
+        # For AcceleratorError, verify it is actually an OOM — not some other CUDA error.
+        if not isinstance(e, torch.cuda.OutOfMemoryError) and "out of memory" not in str(e).lower():
+            raise
+        # Config requires more GPU memory than available (e.g. large T × T attention
+        # matrix with many heads at full batch size).  Treat as a disqualified trial:
+        # return inf CER so it ranks last and tuning continues with the next config.
+        print("\n    [OOM — skipping config]", end="  ", flush=True)
+        best_val_cer = float("inf")
+
+    finally:
+        # Release all GPU-holding objects before empty_cache().
+        # Order matters: optimizer holds parameter tensor references (and ~2×
+        # model size in Adam state), so it must be deleted first so that del model
+        # actually drops the last reference to those tensors.  empty_cache() then
+        # returns the now-free blocks to the CUDA driver for the next trial.
+        del optimizer
+        del scheduler
+        del model
+        if device.type == "cuda":
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                # CUDA may still be in an error state after a hard OOM; ignore
+                # cache-flush failures so the tuner can continue to the next trial.
+                pass
 
     return best_val_cer, timed_out, epochs_run
 
@@ -314,6 +354,7 @@ def _run_phase(
     early_stopping_patience: int,
     rng: random.Random,
     trial_idx_offset: int,
+    preprocess: bool = False,
 ) -> list[TrialResult]:
     """Run *num_trials* proxy trials and return all results.
 
@@ -352,6 +393,7 @@ def _run_phase(
                 model_type=model_type,
                 timeout_secs=timeout_secs,
                 early_stopping_patience=early_stopping_patience,
+                preprocess=preprocess,
             )
         except KeyboardInterrupt:
             print(
@@ -362,12 +404,16 @@ def _run_phase(
 
         elapsed = time.perf_counter() - t0
         tags: list[str] = []
-        if timed_out:
-            tags.append("timeout")
-        if early_stopping_patience > 0 and epochs_run < trial_epochs and not timed_out:
-            tags.append(f"early-stop ep={epochs_run}")
+        if math.isinf(val_cer):
+            tags.append("OOM — skipped")
+        else:
+            if timed_out:
+                tags.append("timeout")
+            if early_stopping_patience > 0 and epochs_run < trial_epochs and not timed_out:
+                tags.append(f"early-stop ep={epochs_run}")
         tag_str = "  [" + ", ".join(tags) + "]" if tags else ""
-        print(f"-> val_CER={val_cer:.2f}%  ({elapsed:.1f}s){tag_str}")
+        cer_str = "OOM" if math.isinf(val_cer) else f"{val_cer:.2f}%"
+        print(f"-> val_CER={cer_str}  ({elapsed:.1f}s){tag_str}")
         results.append((phase_label, global_idx, config, val_cer))
 
     return results
@@ -390,8 +436,9 @@ def _print_results_table(results: list[TrialResult], model_type: str) -> None:
         )
         print("-" * col)
         for rank, (phase, global_idx, cfg, cer) in enumerate(sorted_results, 1):
+            cer_str = "   OOM  " if math.isinf(cer) else f"{cer:>7.2f}%"
             print(
-                f"{rank:>4}  {phase:>5}  {global_idx + 1:>5}  {cer:>7.2f}%  "
+                f"{rank:>4}  {phase:>5}  {global_idx + 1:>5}  {cer_str}  "
                 f"{cfg['lr']:>10.2e}  {cfg['d_model']:>7}  {cfg['num_heads']:>5}  "
                 f"{cfg['num_layers']:>6}  {cfg['conv_kernel_size']:>6}  "
                 f"{cfg['dropout']:>7.3f}  {cfg['weight_decay']:>12.2e}"
@@ -406,8 +453,9 @@ def _print_results_table(results: list[TrialResult], model_type: str) -> None:
         )
         print("-" * col)
         for rank, (phase, global_idx, cfg, cer) in enumerate(sorted_results, 1):
+            cer_str = "   OOM  " if math.isinf(cer) else f"{cer:>7.2f}%"
             print(
-                f"{rank:>4}  {phase:>5}  {global_idx + 1:>5}  {cer:>7.2f}%  "
+                f"{rank:>4}  {phase:>5}  {global_idx + 1:>5}  {cer_str}  "
                 f"{cfg['lr']:>10.2e}  {cfg['hidden_size']:>6}  "
                 f"{cfg['num_layers']:>6}  {cfg['dropout']:>7.3f}  "
                 f"{cfg['weight_decay']:>12.2e}"
@@ -479,6 +527,10 @@ def parse_args() -> argparse.Namespace:
                    help="Raw EMG samples per training window (8000 = 4 s @ 2 kHz)")
     p.add_argument("--seed", type=int, default=42,
                    help="Global random seed for reproducibility")
+    p.add_argument("--preprocess", action="store_true",
+                   help="Use the full preprocessing pipeline (notch + bandpass + decimate + Mel) "
+                        "during tuning trials. Saves to best_hyperparams_{model}_preprocessed.yaml "
+                        "so it does not overwrite the raw-pipeline YAML.")
     return p.parse_args()
 
 
@@ -497,9 +549,12 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if args.output is None:
-        args.output = (
-            Path(__file__).resolve().parent / "checkpoints" / f"best_hyperparams_{args.model}.yaml"
+        _yaml_stem = (
+            f"best_hyperparams_{args.model}_preprocessed"
+            if args.preprocess
+            else f"best_hyperparams_{args.model}"
         )
+        args.output = Path(__file__).resolve().parent / "checkpoints" / f"{_yaml_stem}.yaml"
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     session_paths = get_session_paths(data_root=args.data_root, config_path=args.config)
@@ -517,6 +572,7 @@ def main() -> None:
     # ---- Startup banner ----
     print(f"Device            : {device}")
     print(f"Model             : {args.model}")
+    print(f"Pipeline          : {'preprocessed (notch+bandpass+decimate+Mel)' if args.preprocess else 'raw (LogSpectrogram)'}")
     print(f"Search mode       : {args.search_mode}")
     print(f"Train sessions    : {len(trial_train_paths)} / {len(all_train_paths)}")
     print(f"Val sessions      : {len(val_paths)}")
@@ -564,6 +620,7 @@ def main() -> None:
         early_stopping_patience=args.early_stopping_patience,
         rng=rng,
         trial_idx_offset=0,
+        preprocess=args.preprocess,
     )
     all_results.extend(coarse_results)
 
@@ -602,6 +659,7 @@ def main() -> None:
                 early_stopping_patience=args.early_stopping_patience,
                 rng=rng,
                 trial_idx_offset=fine_trial_offset,
+                preprocess=args.preprocess,
             )
             fine_results.extend(phase_results)
             fine_trial_offset += args.fine_trials
@@ -646,6 +704,7 @@ def main() -> None:
                 model_type=args.model,
                 timeout_secs=timeout_secs,
                 early_stopping_patience=args.early_stopping_patience,
+                preprocess=args.preprocess,
             )
         except KeyboardInterrupt:
             confirm_cer = best_cer
@@ -659,10 +718,16 @@ def main() -> None:
 
     # ---- Results table ----
     _print_results_table(all_results, args.model)
+    best_cer_str = "OOM" if math.isinf(best_cer) else f"{best_cer:.2f}%"
     print(
         f"\nBest config: phase={best_phase}  trial={best_global_idx + 1}"
-        f"  val_CER={best_cer:.2f}%"
+        f"  val_CER={best_cer_str}"
     )
+
+    if math.isinf(best_cer):
+        print("All trials ran out of GPU memory — no YAML saved. "
+              "Try reducing --batch-size or removing d_model=128 from the search space.")
+        return
 
     # ---- Save YAML ----
     if args.model == "conformer":
@@ -686,6 +751,7 @@ def main() -> None:
         **model_hp,
         # Metadata (ignored by train.py, useful for auditing)
         "trial_val_cer":      round(float(best_cer), 4),
+        "preprocessed":       args.preprocess,
         "search_mode":        args.search_mode,
         "search_phase_found": best_phase,
         "num_coarse_trials":  len(coarse_results),
@@ -704,9 +770,10 @@ def main() -> None:
 
     print(f"\nBest hyperparameters saved to: {args.output}")
     print("\nTo train with these hyperparameters run:")
+    _preprocess_flag = " --preprocess" if args.preprocess else ""
     print(
         f"  .venv\\Scripts\\python.exe -m Playground_Kai.train "
-        f"--model {args.model} --from-hyperparams {args.output}"
+        f"--model {args.model} --from-hyperparams {args.output}{_preprocess_flag}"
     )
 
 

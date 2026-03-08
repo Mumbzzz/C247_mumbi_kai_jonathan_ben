@@ -319,3 +319,79 @@ Total train time: 01:45:27 (6327.0s)
   Test DER         : 2.07%
   Test SER         : 11.87%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260308_0646hrs
+Model           : conformer
+Pipeline        : preprocessed
+Device          : cuda
+Parameters      : 3,597,699
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 02:46:08 (9968.3s)
+--- Hyperparameters ---
+  lr=0.0008453241881083158
+  weight_decay=0.02095814679480875
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.11692790270649321
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 15.68%
+  Test CER         : 16.65%
+  Test IER         : 4.01%
+  Test DER         : 1.58%
+  Test SER         : 11.07%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260308_1300hrs
+Model           : conformer
+Pipeline        : preprocessed
+Device          : cuda
+Parameters      : 3,597,699
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 02:52:25 (10345.8s)
+--- Hyperparameters ---
+  lr=0.0008453241881083158
+  weight_decay=0.02095814679480875
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.11692790270649321
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 14.13%
+  Test CER         : 15.89%
+  Test IER         : 3.12%
+  Test DER         : 1.80%
+  Test SER         : 10.98%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260308_1623hrs
+Model           : rnn
+Pipeline        : preprocessed
+Device          : cuda
+Parameters      : 5,549,955
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 02:26:44 (8804.1s)
+--- Hyperparameters ---
+  lr=0.0004584197485106983
+  weight_decay=0.05407136503563504
+  hidden_size=512
+  num_layers=1
+  dropout=0.44212708840605874
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 22.33%
+  Test CER         : 22.76%
+  Test IER         : 4.88%
+  Test DER         : 2.85%
+  Test SER         : 15.02%
+#################################################

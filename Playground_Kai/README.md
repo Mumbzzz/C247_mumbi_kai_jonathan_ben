@@ -31,6 +31,16 @@ Loads the saved best checkpoint and evaluates on the held-out test set. No train
 
 > Requires `Playground_Kai/checkpoints/best_rnn.pt` or `best_conformer.pt` to exist (produced by a prior training run).
 
+**Hyperparam Tuning**
+* Raw pipeline (unchanged behaviour)
+```powershell
+.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --coarse-trials 25 --coarse-epochs 15 --fine-top-k 1 --fine-trials 15 --fine-epochs 15 --trial-sessions 8 --early-stopping-patience 10 --trial-timeout 300
+```
+
+* Preprocessed pipeline
+```powershell
+.\.venv\Scripts\python.exe -m Playground_Kai.hyperparam_tuner --model conformer --preprocess --coarse-trials 25 --coarse-epochs 15 --fine-top-k 1 --fine-trials 15 --fine-epochs 15 --trial-sessions 8 --early-stopping-patience 10 --trial-timeout 300
+```
 ---
 
 ## Back-to-Back: Hyperparameter Search → Full Train
