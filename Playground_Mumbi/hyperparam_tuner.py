@@ -272,6 +272,35 @@ def _print_config_inline(config: dict[str, Any]) -> None:
     )
 
 
+def _save_best_yaml(output_path: Path, best_result: "TrialResult", args: argparse.Namespace, coarse_results: list, fine_results: list, coarse_epochs: int) -> None:
+    """Save the current best config to YAML — called after every trial."""
+    best_phase, _, best_config, best_cer = best_result
+    output_data: dict[str, Any] = {
+        "lr":           float(best_config["lr"]),
+        "weight_decay": float(best_config["weight_decay"]),
+        "cnn_channels": int(best_config["cnn_channels"]),
+        "cnn_kernel":   int(best_config["cnn_kernel"]),
+        "cnn_layers":   int(best_config["cnn_layers"]),
+        "lstm_hidden":  int(best_config["lstm_hidden"]),
+        "lstm_layers":  int(best_config["lstm_layers"]),
+        "dropout":      float(best_config["dropout"]),
+        "trial_val_cer":      round(float(best_cer), 4),
+        "search_mode":        args.search_mode,
+        "search_phase_found": best_phase,
+        "num_coarse_trials":  len(coarse_results),
+        "num_fine_trials":    len(fine_results),
+        "coarse_epochs":      coarse_epochs,
+        "fine_epochs":        args.fine_epochs if args.search_mode == "two-phase" else None,
+        "num_trial_sessions": args.trial_sessions,
+        "fine_shrink":        args.fine_shrink if args.search_mode == "two-phase" else None,
+        "tuned_at":           datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    output_data = {k: v for k, v in output_data.items() if v is not None}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        yaml.dump(output_data, f, default_flow_style=False, sort_keys=False)
+
+
 def _run_phase(
     phase_label: str,
     num_trials: int,
@@ -286,6 +315,10 @@ def _run_phase(
     early_stopping_patience: int,
     rng: random.Random,
     trial_idx_offset: int,
+    output_path: Path | None = None,
+    all_results_so_far: list[TrialResult] | None = None,
+    args: argparse.Namespace | None = None,
+    coarse_epochs: int = 0,
 ) -> list[TrialResult]:
     """Run *num_trials* proxy trials and return all results.
 
@@ -339,6 +372,14 @@ def _run_phase(
         tag_str = "  [" + ", ".join(tags) + "]" if tags else ""
         print(f"-> val_CER={val_cer:.2f}%  ({elapsed:.1f}s){tag_str}")
         results.append((phase_label, global_idx, config, val_cer))
+
+        # Mid-run save: write best YAML after every trial so a disconnect doesn't lose progress
+        if output_path is not None and args is not None:
+            combined = (all_results_so_far or []) + results
+            best = min(combined, key=lambda x: x[3])
+            coarse_so_far = [r for r in combined if not r[0].startswith("F")]
+            fine_so_far   = [r for r in combined if r[0].startswith("F")]
+            _save_best_yaml(output_path, best, args, coarse_so_far, fine_so_far, coarse_epochs)
 
     return results
 
@@ -514,6 +555,10 @@ def main() -> None:
         early_stopping_patience=args.early_stopping_patience,
         rng=rng,
         trial_idx_offset=0,
+        output_path=args.output,
+        all_results_so_far=[],
+        args=args,
+        coarse_epochs=coarse_epochs,
     )
     all_results.extend(coarse_results)
 
@@ -551,6 +596,10 @@ def main() -> None:
                 early_stopping_patience=args.early_stopping_patience,
                 rng=rng,
                 trial_idx_offset=fine_trial_offset,
+                output_path=args.output,
+                all_results_so_far=coarse_results,
+                args=args,
+                coarse_epochs=coarse_epochs,
             )
             fine_results.extend(phase_results)
             fine_trial_offset += args.fine_trials
@@ -612,33 +661,12 @@ def main() -> None:
         f"  val_CER={best_cer:.2f}%"
     )
 
-    # ---- Save YAML ----
-    output_data: dict[str, Any] = {
-        "lr":           float(best_config["lr"]),
-        "weight_decay": float(best_config["weight_decay"]),
-        "cnn_channels": int(best_config["cnn_channels"]),
-        "cnn_kernel":   int(best_config["cnn_kernel"]),
-        "cnn_layers":   int(best_config["cnn_layers"]),
-        "lstm_hidden":  int(best_config["lstm_hidden"]),
-        "lstm_layers":  int(best_config["lstm_layers"]),
-        "dropout":      float(best_config["dropout"]),
-        # Metadata (ignored by train.py, useful for auditing)
-        "trial_val_cer":      round(float(best_cer), 4),
-        "search_mode":        args.search_mode,
-        "search_phase_found": best_phase,
-        "num_coarse_trials":  len(coarse_results),
-        "num_fine_trials":    len(fine_results),
-        "coarse_epochs":      coarse_epochs,
-        "fine_epochs":        args.fine_epochs if args.search_mode == "two-phase" else None,
-        "num_trial_sessions": args.trial_sessions,
-        "fine_shrink":        args.fine_shrink if args.search_mode == "two-phase" else None,
-        "tuned_at":           datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    # Drop None values for a clean YAML in coarse-only mode
-    output_data = {k: v for k, v in output_data.items() if v is not None}
-
-    with open(args.output, "w") as f:
-        yaml.dump(output_data, f, default_flow_style=False, sort_keys=False)
+    # ---- Final save ----
+    # Rebuild tuple with confirmed CER (may differ from proxy-trial CER if --confirm-epochs was used)
+    coarse_final = [r for r in all_results if not r[0].startswith("F")]
+    fine_final   = [r for r in all_results if r[0].startswith("F")]
+    final_best_result = (best_phase, best_global_idx, best_config, best_cer)
+    _save_best_yaml(args.output, final_best_result, args, coarse_final, fine_final, coarse_epochs)
 
     print(f"\nBest hyperparameters saved to: {args.output}")
     print("\nTo train with these hyperparameters run:")
