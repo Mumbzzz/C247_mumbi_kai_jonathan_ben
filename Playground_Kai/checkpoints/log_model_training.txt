@@ -296,3 +296,26 @@ Total train time: 01:41:53 (6113.2s)
   Test DER         : 1.84%
   Test SER         : 12.79%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260307_1724hrs
+Model           : rnn
+Device          : cuda
+Parameters      : 5,758,883
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 01:45:27 (6327.0s)
+--- Hyperparameters ---
+  lr=0.0004584197485106983
+  weight_decay=0.05407136503563504
+  hidden_size=512
+  num_layers=1
+  dropout=0.44212708840605874
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 17.86%
+  Test CER         : 17.98%
+  Test IER         : 4.04%
+  Test DER         : 2.07%
+  Test SER         : 11.87%
+#################################################
