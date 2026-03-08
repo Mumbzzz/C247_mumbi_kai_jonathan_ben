@@ -1,10 +1,11 @@
-"""Training and evaluation script for the TDS CNN baseline model.
+"""Training and evaluation script for the TDS CNN baseline and CNN+LSTM hybrid models.
 
 Run from the workspace root with:
     python -m Playground_Mumbi.train [options]
     python Playground_Mumbi/train.py [options]
 
 Key flags (all have defaults, so a bare invocation will start training):
+    --model             Which model to train: cnn (default) or cnn_lstm
     --epochs            Number of training epochs          (default: 80)
     --batch-size        Batch size                         (default: 32)
     --lr                Peak learning rate                 (default: 1e-3)
@@ -14,13 +15,22 @@ Key flags (all have defaults, so a bare invocation will start training):
     --resume            Path to a checkpoint .pt to continue training
     --num-workers       DataLoader workers (default: 0, safe on Windows)
 
-Model hyperparameters match config/model/tds_conv_ctc.yaml exactly:
+CNN baseline hyperparameters match config/model/tds_conv_ctc.yaml exactly:
     in_features=528, mlp_features=[384], block_channels=[24,24,24,24],
     kernel_width=32
 
-The best checkpoint (lowest val CER) is saved to
-    Playground_Mumbi/checkpoints/final_models/best_cnn.pt          (--train-fraction 1.0)
-    Playground_Mumbi/checkpoints/training_fraction_ablation/best_cnn_{pct}pct.pt  (otherwise)
+CNN+LSTM architecture flags (only used when --model cnn_lstm):
+    --cnn-channels      Number of channels in 1D CNN blocks   (default: 256)
+    --cnn-kernel        Kernel size for 1D convolutions        (default: 5)
+    --cnn-layers        Number of CNN blocks                   (default: 2)
+    --lstm-hidden       BiLSTM hidden units per direction      (default: 256)
+    --lstm-layers       Number of stacked BiLSTM layers        (default: 2)
+    --dropout           Dropout probability                    (default: 0.3)
+
+The best checkpoint (lowest val CER) is saved to:
+    Playground_Mumbi/checkpoints/final_models/best_cnn.pt           (CNN, --train-fraction 1.0)
+    Playground_Mumbi/checkpoints/training_fraction_ablation/best_cnn_{pct}pct.pt  (CNN, otherwise)
+    Playground_Mumbi/checkpoints/final_models/best_cnn_lstm.pt      (CNN+LSTM)
 and automatically loaded for the final test evaluation.
 """
 
@@ -52,6 +62,7 @@ from emg2qwerty.modules import (
 )
 
 from Playground_Mumbi.data_utils import get_dataloaders
+from Playground_Mumbi.model import CNNLSTMModel
 from scripts.logger import log_epoch, log_summary, make_run_id
 
 
@@ -110,9 +121,42 @@ def build_model() -> nn.Module:
     )
 
 
-# ---------------------------------------------------------------------------
-# Learning-rate schedule: linear warmup + cosine annealing (step-level)
-# ---------------------------------------------------------------------------
+def build_cnn_lstm_model(args: argparse.Namespace) -> nn.Module:
+    """Build the CNN+LSTM hybrid model from CLI args.
+
+    Architecture:
+        SpectrogramNorm → MultiBandRotationInvariantMLP → Flatten
+        → 1D CNN blocks (local temporal feature extraction)
+        → BiLSTM (long-range sequential modelling)
+        → Linear → LogSoftmax
+
+    The CNN front-end shares the same SpectrogramNorm + MLP as the TDS baseline
+    for a fair comparison.  The BiLSTM is bidirectional because we process
+    fixed-length windows, so future context within the window is available.
+
+    Args:
+        args: Parsed CLI arguments.  The following fields are used:
+            cnn_channels, cnn_kernel, cnn_layers,
+            lstm_hidden, lstm_layers, dropout.
+
+    Returns:
+        A :class:`CNNLSTMModel` instance.
+    """
+    return CNNLSTMModel(
+        in_features=_IN_FEATURES,
+        mlp_features=_MLP_FEATURES,
+        num_bands=_NUM_BANDS,
+        cnn_channels=args.cnn_channels,
+        cnn_kernel=args.cnn_kernel,
+        cnn_layers=args.cnn_layers,
+        lstm_hidden=args.lstm_hidden,
+        lstm_layers=args.lstm_layers,
+        dropout=args.dropout,
+        num_classes=charset().num_classes,
+    )
+
+
+
 
 def _lr_lambda(
     step: int,
@@ -244,13 +288,16 @@ def evaluate(
 # Single training run
 # ---------------------------------------------------------------------------
 
-def run_training(args: argparse.Namespace, train_fraction: float, notes: str) -> None:
+def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
+                 model_name: str = "CNN", model: nn.Module | None = None) -> None:
     """Execute one complete train + test cycle for a given train_fraction.
 
     Args:
         args:           Parsed CLI arguments.
         train_fraction: Fraction of training windows to use (0.0, 1.0].
         notes:          Value written to the ``notes`` field in the run summary.
+        model_name:     Model identifier used in logging (e.g. "CNN", "CNN_LSTM").
+        model:          Model instance to train.  If None, builds the TDS CNN baseline.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n{'='*60}")
@@ -281,15 +328,17 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str) ->
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model = build_model().to(device)
-    print(f"Model       : CNN (TDS baseline)")
+    if model is None:
+        model = build_model()
+    model = model.to(device)
+    print(f"Model       : {model_name}")
     print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,}")
 
     # ------------------------------------------------------------------
     # Logger run ID
     # ------------------------------------------------------------------
     run_id = make_run_id(
-        model="CNN",
+        model=model_name,
         num_channels=32,
         sampling_rate_hz=2000,
         train_fraction=train_fraction,
@@ -303,7 +352,15 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str) ->
     # zero_infinity=True prevents NaN loss for very short windows.
     criterion = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # CNN baseline uses Adam (matches original TDS training setup).
+    # CNN+LSTM uses AdamW — decouples weight decay from the adaptive LR update,
+    # so the tuned weight_decay hyperparameter behaves as intended.
+    if model_name == "CNN_LSTM":
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        )
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     steps_per_epoch = len(loaders["train"])
     total_steps = args.epochs * steps_per_epoch
@@ -374,7 +431,7 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str) ->
         # Log epoch to CSV
         log_epoch(
             run_id=run_id,
-            model="CNN",
+            model=model_name,
             epoch=epoch + 1,
             train_loss=train_loss,
             val_loss=val_loss,
@@ -385,12 +442,13 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str) ->
         if val_cer < best_cer:
             best_cer = val_cer
             fraction_pct = int(round(train_fraction * 100))
+            model_slug = model_name.lower().replace("_", "")  # "cnn" or "cnnlstm"
             if train_fraction < 1.0:
                 ckpt_dir = args.checkpoint_dir / "training_fraction_ablation"
-                ckpt_path = ckpt_dir / f"best_cnn_{fraction_pct}pct.pt"
+                ckpt_path = ckpt_dir / f"best_{model_slug}_{fraction_pct}pct.pt"
             else:
                 ckpt_dir = args.checkpoint_dir / "final_models"
-                ckpt_path = ckpt_dir / "best_cnn.pt"
+                ckpt_path = ckpt_dir / f"best_{model_slug}.pt"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             safe_args = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
             torch.save(
@@ -414,10 +472,11 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str) ->
     # ------------------------------------------------------------------
     print("\n--- Test Evaluation ---")
     fraction_pct = int(round(train_fraction * 100))
+    model_slug = model_name.lower().replace("_", "")
     if train_fraction < 1.0:
-        best_ckpt = args.checkpoint_dir / "training_fraction_ablation" / f"best_cnn_{fraction_pct}pct.pt"
+        best_ckpt = args.checkpoint_dir / "training_fraction_ablation" / f"best_{model_slug}_{fraction_pct}pct.pt"
     else:
-        best_ckpt = args.checkpoint_dir / "final_models" / "best_cnn.pt"
+        best_ckpt = args.checkpoint_dir / "final_models" / f"best_{model_slug}.pt"
     if best_ckpt.exists():
         ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model"])
@@ -434,7 +493,7 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str) ->
     # ------------------------------------------------------------------
     log_summary(
         run_id=run_id,
-        model="CNN",
+        model=model_name,
         epochs=epochs_completed,
         num_channels=32,
         sampling_rate_hz=2000,
@@ -459,6 +518,10 @@ def parse_args() -> argparse.Namespace:
         description="Train the TDS CNN baseline model",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    # Model selection
+    p.add_argument("--model", type=str, default="cnn",
+                   choices=["cnn", "cnn_lstm"],
+                   help="Which model to train (default: cnn)")
     # Paths
     p.add_argument("--data-root", type=Path, default=_ROOT / "data",
                    help="Directory containing *.hdf5 session files")
@@ -477,7 +540,9 @@ def parse_args() -> argparse.Namespace:
                    help="Raw EMG samples per training/test window (8000 = 4 s @ 2 kHz)")
     # Optimiser / scheduler
     p.add_argument("--lr", type=float, default=1e-3,
-                   help="Peak (post-warmup) learning rate for Adam")
+                   help="Peak (post-warmup) learning rate for Adam / AdamW")
+    p.add_argument("--weight-decay", type=float, default=1e-4,
+                   help="Weight decay for AdamW (CNN+LSTM only, ignored for CNN)")
     p.add_argument("--min-lr", type=float, default=1e-5,
                    help="Minimum learning rate at the end of cosine decay")
     p.add_argument("--warmup-epochs", type=int, default=10,
@@ -490,6 +555,25 @@ def parse_args() -> argparse.Namespace:
                        "Run training sequentially for fractions "
                        f"{_ALL_FRACTIONS} and log each run with Playground_Mumbi.logger"
                    ))
+    # CNN+LSTM architecture flags (only used when --model cnn_lstm)
+    p.add_argument("--from-hyperparams", type=Path, default=None,
+                   help="Path to a YAML file saved by hyperparam_tuner.py. "
+                        "Overrides --lr, --weight-decay, --cnn-channels, --cnn-kernel, "
+                        "--cnn-layers, --lstm-hidden, --lstm-layers, and --dropout "
+                        "with the tuned values. Any of those flags can still be "
+                        "specified alongside to override individual fields.")
+    p.add_argument("--cnn-channels", type=int, default=256,
+                   help="Number of channels in each 1D CNN block")
+    p.add_argument("--cnn-kernel", type=int, default=5,
+                   help="Kernel size for 1D CNN blocks")
+    p.add_argument("--cnn-layers", type=int, default=2,
+                   help="Number of 1D CNN blocks")
+    p.add_argument("--lstm-hidden", type=int, default=256,
+                   help="BiLSTM hidden units per direction")
+    p.add_argument("--lstm-layers", type=int, default=2,
+                   help="Number of stacked BiLSTM layers")
+    p.add_argument("--dropout", type=float, default=0.3,
+                   help="Dropout probability (used in CNN+LSTM only)")
     # Resume
     p.add_argument("--resume", type=Path, default=None,
                    help="Checkpoint .pt file to resume training from")
@@ -503,13 +587,53 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if args.run_all_fractions:
-        print(f"--run-all-fractions: will train for fractions {_ALL_FRACTIONS}")
-        for frac in _ALL_FRACTIONS:
-            run_training(args, train_fraction=frac, notes="ablation_train_fraction")
-    else:
+    # If --from-hyperparams is given, load the tuner YAML and patch args.
+    # Explicit CLI flags always win — we only overwrite fields that are still
+    # at their argparse defaults, so the user can mix-and-match freely.
+    if args.from_hyperparams is not None:
+        import yaml
+        with open(args.from_hyperparams) as f:
+            hp = yaml.safe_load(f)
+        # Map YAML keys → args attribute names
+        _HP_FIELDS = {
+            "lr":           "lr",
+            "weight_decay": "weight_decay",
+            "cnn_channels": "cnn_channels",
+            "cnn_kernel":   "cnn_kernel",
+            "cnn_layers":   "cnn_layers",
+            "lstm_hidden":  "lstm_hidden",
+            "lstm_layers":  "lstm_layers",
+            "dropout":      "dropout",
+        }
+        for yaml_key, arg_attr in _HP_FIELDS.items():
+            if yaml_key in hp:
+                setattr(args, arg_attr, hp[yaml_key])
+        print(f"Loaded hyperparameters from: {args.from_hyperparams}")
+        for yaml_key, arg_attr in _HP_FIELDS.items():
+            if yaml_key in hp:
+                print(f"  {arg_attr} = {getattr(args, arg_attr)}")
+
+    if args.model == "cnn_lstm":
+        # CNN+LSTM: single full training run (no fraction sweep)
         notes = "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
-        run_training(args, train_fraction=args.train_fraction, notes=notes)
+        run_training(
+            args,
+            train_fraction=args.train_fraction,
+            notes=notes,
+            model_name="CNN_LSTM",
+            model=build_cnn_lstm_model(args),
+        )
+    else:
+        # TDS CNN baseline — optionally sweep all training fractions
+        if args.run_all_fractions:
+            print(f"--run-all-fractions: will train for fractions {_ALL_FRACTIONS}")
+            for frac in _ALL_FRACTIONS:
+                run_training(args, train_fraction=frac, notes="ablation_train_fraction",
+                             model_name="CNN", model=build_model())
+        else:
+            notes = "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
+            run_training(args, train_fraction=args.train_fraction, notes=notes,
+                         model_name="CNN", model=build_model())
 
 
 if __name__ == "__main__":
