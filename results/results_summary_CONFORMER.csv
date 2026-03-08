@@ -1,0 +1,2 @@
+run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
+CONFORMER_32ch_2000hz_89pct_20260307_180330,2026-03-07 18:03:30,CONFORMER,106,32,2000,0.886090573012939,spectrogram,nan,nan,12.095702259636685,14.44348202685145,0.0,test_only
