@@ -1,0 +1,63 @@
+# @package _global_
+# Channel ablation with best temporal config (factor=2, 1000 Hz).
+# Pipeline: bandpass (20-460 Hz) → downsample → logspec → channel_select
+# window_length=8000  padding=[1800,200]  (must be CLI overrides)
+
+to_tensor:
+  _target_: emg2qwerty.transforms.ToTensor
+  fields: [emg_left, emg_right]
+
+band_rotation:
+  _target_: emg2qwerty.transforms.ForEach
+  transform:
+    _target_: emg2qwerty.transforms.RandomBandRotation
+    offsets: [-1, 0, 1]
+
+temporal_jitter:
+  _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+  max_offset: 120
+
+bandpass:
+  _target_: emg2qwerty.transforms.BandpassFilter
+  low_hz: 20.0
+  high_hz: 460.0
+  sample_rate: 2000
+  num_taps: 101
+
+temporal_downsample:
+  _target_: emg2qwerty.transforms.TemporalDownsample
+  factor: 2
+
+logspec:
+  _target_: emg2qwerty.transforms.LogSpectrogram
+  n_fft: 64
+  hop_length: 16
+
+channel_select:
+  _target_: emg2qwerty.transforms.ChannelSelect
+  indices: [0, 4, 8, 12]
+
+specaug:
+  _target_: emg2qwerty.transforms.SpecAugment
+  n_time_masks: 3
+  time_mask_param: 25
+  n_freq_masks: 2
+  freq_mask_param: 4
+
+transforms:
+  train:
+    - ${to_tensor}
+    - ${band_rotation}
+    - ${temporal_jitter}
+    - ${bandpass}
+    - ${temporal_downsample}
+    - ${logspec}
+    - ${channel_select}
+    - ${specaug}
+  val:
+    - ${to_tensor}
+    - ${bandpass}
+    - ${temporal_downsample}
+    - ${logspec}
+    - ${channel_select}
+  test: ${transforms.val}

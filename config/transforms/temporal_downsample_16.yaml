@@ -1,0 +1,64 @@
+# @package _global_
+# Temporal downsampling by factor 16: 2000 Hz → 125 Hz
+# Bandpass filter (20–460 Hz) applied before downsampling to remove DC drift
+# and limit signal to meaningful EMG band prior to anti-aliased resample.
+# in_features unchanged: 33 * 16 = 528
+#
+# IMPORTANT: window_length and padding must be passed as CLI overrides, NOT here.
+# base.yaml (_self_) takes precedence over config-group files in Hydra defaults.
+# The run script handles this automatically. To run manually:
+#   python -m emg2qwerty.train transforms=temporal_downsample_16 user=single_user \
+#       datamodule.window_length=64000 "datamodule.padding=[14400,1600]"
+
+to_tensor:
+  _target_: emg2qwerty.transforms.ToTensor
+  fields: [emg_left, emg_right]
+
+band_rotation:
+  _target_: emg2qwerty.transforms.ForEach
+  transform:
+    _target_: emg2qwerty.transforms.RandomBandRotation
+    offsets: [-1, 0, 1]
+
+temporal_jitter:
+  _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+  max_offset: 120
+
+bandpass:
+  _target_: emg2qwerty.transforms.BandpassFilter
+  low_hz: 20.0
+  high_hz: 460.0
+  sample_rate: 2000
+  num_taps: 101
+
+temporal_downsample:
+  _target_: emg2qwerty.transforms.TemporalDownsample
+  factor: 16
+
+logspec:
+  _target_: emg2qwerty.transforms.LogSpectrogram
+  n_fft: 64
+  hop_length: 16
+
+specaug:
+  _target_: emg2qwerty.transforms.SpecAugment
+  n_time_masks: 3
+  time_mask_param: 25
+  n_freq_masks: 2
+  freq_mask_param: 4
+
+transforms:
+  train:
+    - ${to_tensor}
+    - ${band_rotation}
+    - ${temporal_jitter}
+    - ${bandpass}
+    - ${temporal_downsample}
+    - ${logspec}
+    - ${specaug}
+  val:
+    - ${to_tensor}
+    - ${bandpass}
+    - ${temporal_downsample}
+    - ${logspec}
+  test: ${transforms.val}
