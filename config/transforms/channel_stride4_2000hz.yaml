@@ -1,0 +1,48 @@
+# @package _global_
+# Channel ablation — 4 ch/hand at 2000 Hz (original pipeline, no filtering/downsampling)
+# Every 4th electrode: indices 0,4,8,12
+# in_features = (n_fft//2+1) * 4 = 33 * 4 = 132
+
+to_tensor:
+  _target_: emg2qwerty.transforms.ToTensor
+  fields: [emg_left, emg_right]
+
+band_rotation:
+  _target_: emg2qwerty.transforms.ForEach
+  transform:
+    _target_: emg2qwerty.transforms.RandomBandRotation
+    offsets: [-1, 0, 1]
+
+temporal_jitter:
+  _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+  max_offset: 120
+
+logspec:
+  _target_: emg2qwerty.transforms.LogSpectrogram
+  n_fft: 64
+  hop_length: 16
+
+channel_select:
+  _target_: emg2qwerty.transforms.ChannelSelect
+  indices: [0, 4, 8, 12]
+
+specaug:
+  _target_: emg2qwerty.transforms.SpecAugment
+  n_time_masks: 3
+  time_mask_param: 25
+  n_freq_masks: 2
+  freq_mask_param: 4
+
+transforms:
+  train:
+    - ${to_tensor}
+    - ${band_rotation}
+    - ${temporal_jitter}
+    - ${logspec}
+    - ${channel_select}
+    - ${specaug}
+  val:
+    - ${to_tensor}
+    - ${logspec}
+    - ${channel_select}
+  test: ${transforms.val}

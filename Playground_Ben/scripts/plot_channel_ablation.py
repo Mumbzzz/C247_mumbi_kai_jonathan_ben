@@ -60,9 +60,9 @@ matplotlib.rcParams.update({
 # All runs at 2000 Hz raw data, varying channel count only.
 CHANNEL_CONFIGS = {
     16: "log_spectrogram",
-    8:  "channel_stride2",
-    4:  "channel_stride4",
-    2:  "channel_stride8",
+    8:  "channel_stride2_2000hz",
+    4:  "channel_stride4_2000hz",
+    2:  "channel_stride8_2000hz",
 }
 
 def _find_best_run(transform_tag: str) -> Path | None:
