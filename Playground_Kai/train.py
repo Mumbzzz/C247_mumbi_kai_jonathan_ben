@@ -44,6 +44,7 @@ from emg2qwerty.metrics import CharacterErrorRates
 
 from Playground_Kai.data_utils import get_dataloaders
 from Playground_Kai.model import RNNEncoder, ConformerEncoder
+from scripts.logger import log_epoch, log_summary, make_run_id
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +247,8 @@ def parse_args() -> argparse.Namespace:
                    help="Skip training: load best_{model}.pt and run test evaluation only")
     p.add_argument("--from-hyperparams", type=Path, default=None,
                    help="YAML file of hyperparameters (e.g. from hyperparam_tuner.py)")
+    p.add_argument("--notes", type=str, default="",
+                   help="Free-text annotation written to the CSV log (e.g. 'ablation_layers')")
     return p.parse_args()
 
 
@@ -317,8 +320,32 @@ def main() -> None:
                 "Train first or pass --checkpoint-dir pointing at an existing checkpoint."
             )
         ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
+
+        # Rebuild the model from the hyperparams that were used during training,
+        # not from CLI defaults.  The checkpoint stores args as a plain dict.
+        saved_args = ckpt.get("args", {})
+        if args.model == "conformer":
+            model = ConformerEncoder(
+                in_features=528,
+                mlp_features=(384,),
+                d_model=int(saved_args.get("d_model", args.d_model)),
+                num_heads=int(saved_args.get("num_heads", args.num_heads)),
+                num_layers=int(saved_args.get("num_layers", args.num_layers)),
+                conv_kernel_size=int(saved_args.get("conv_kernel_size", args.conv_kernel_size)),
+                dropout=float(saved_args.get("dropout", args.dropout)),
+            ).to(device)
+        else:
+            model = RNNEncoder(
+                in_features=528,
+                mlp_features=(384,),
+                hidden_size=int(saved_args.get("hidden_size", args.hidden_size)),
+                num_layers=int(saved_args.get("num_layers", args.num_layers)),
+                dropout=float(saved_args.get("dropout", args.dropout)),
+            ).to(device)
+        print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,} (from checkpoint args)")
+
         model.load_state_dict(ckpt["model"])
-        saved_epoch = ckpt.get("epoch", "?")  
+        saved_epoch = ckpt.get("epoch", "?")
         saved_cer   = ckpt.get("best_cer", float("nan"))
         print(f"Loaded checkpoint — epoch {saved_epoch + 1 if isinstance(saved_epoch, int) else saved_epoch}  val CER={saved_cer:.2f}%")
         print("\n--- Test Evaluation ---")
@@ -326,6 +353,35 @@ def main() -> None:
         print("Test metrics:")
         for k, v in test_metrics.items():
             print(f"  {k}: {v:.2f}%")
+
+        # Log summary to CSV even for test-only runs
+        _logger_model = "CONFORMER" if args.model == "conformer" else "RNN"
+        _n_train  = len(loaders["train"].dataset)
+        _n_total  = _n_train + len(loaders["val"].dataset) + len(loaders["test"].dataset)
+        _train_fraction = _n_train / _n_total
+        _run_id = make_run_id(
+            model=_logger_model,
+            num_channels=32,
+            sampling_rate_hz=2000,
+            train_fraction=_train_fraction,
+        )
+        _notes = (args.notes + " " if args.notes else "") + "test_only"
+        log_summary(
+            _run_id,
+            model=_logger_model,
+            epochs=saved_epoch + 1 if isinstance(saved_epoch, int) else 0,
+            num_channels=32,
+            sampling_rate_hz=2000,
+            train_fraction=_train_fraction,
+            input_type="spectrogram",
+            final_train_loss=float("nan"),
+            final_val_loss=float("nan"),
+            final_val_cer=saved_cer,
+            test_cer=test_metrics.get("CER", float("nan")),
+            training_time_sec=0.0,
+            notes=_notes,
+        )
+        print(f"Test result logged to results/results_summary_{_logger_model}.csv")
         return
 
     # ------------------------------------------------------------------
@@ -374,6 +430,22 @@ def main() -> None:
     epoch_duration: float = 0.0  # updated each epoch for ETA estimation
     train_start_time = time.perf_counter()
 
+    # --- Logger setup ---
+    _logger_model = "CONFORMER" if args.model == "conformer" else "RNN"
+    _n_train = len(loaders["train"].dataset)
+    _n_total = _n_train + len(loaders["val"].dataset) + len(loaders["test"].dataset)
+    _train_fraction = _n_train / _n_total
+    run_id = make_run_id(
+        model=_logger_model,
+        num_channels=32,          # 16 electrodes × 2 wrists
+        sampling_rate_hz=2000,
+        train_fraction=_train_fraction,
+    )
+    # Sentinels — updated each epoch; used in log_summary even on early stop
+    _final_train_loss: float = float("nan")
+    _final_val_loss:   float = float("nan")
+    _final_val_cer:    float = float("nan")
+
     for epoch in range(start_epoch, args.epochs):
         t0 = time.perf_counter()
         try:
@@ -399,6 +471,11 @@ def main() -> None:
             f" | epoch_time={epoch_duration:.1f}s"
             f" | ETA={eta_str}"
         )
+
+        # Log epoch to CSV
+        log_epoch(run_id, model=_logger_model, epoch=epoch + 1,
+                  train_loss=train_loss, val_loss=val_loss, val_cer=val_cer)
+        _final_train_loss, _final_val_loss, _final_val_cer = train_loss, val_loss, val_cer
 
         # Save checkpoint whenever val CER improves
         if val_cer < best_cer:
@@ -438,6 +515,23 @@ def main() -> None:
         print(f"  {k}: {v:.2f}%")
 
     print(f"\nTotal training time: {total_time_str} ({total_training_time:.1f}s)")
+
+    # --- Log summary to CSV ---
+    log_summary(
+        run_id,
+        model=_logger_model,
+        epochs=epochs_completed,
+        num_channels=32,
+        sampling_rate_hz=2000,
+        train_fraction=_train_fraction,
+        input_type="spectrogram",
+        final_train_loss=_final_train_loss,
+        final_val_loss=_final_val_loss,
+        final_val_cer=_final_val_cer,
+        test_cer=test_metrics.get("CER", float("nan")),
+        training_time_sec=total_training_time,
+        notes=args.notes,
+    )
 
     # ------------------------------------------------------------------
     # Append structured report to log file
