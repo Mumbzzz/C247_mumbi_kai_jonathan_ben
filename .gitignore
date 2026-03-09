@@ -58,3 +58,6 @@ wikitext-103-raw*
 
 # TEMPORARY: Ignore large model files
 models/
+
+# Model checkpoints (too large for GitHub)
+*.pt
