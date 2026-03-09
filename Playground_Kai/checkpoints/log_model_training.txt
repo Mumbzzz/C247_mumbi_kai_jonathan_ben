@@ -469,3 +469,53 @@ Total train time: 01:45:10 (6310.3s)
   Test DER         : 1.91%
   Test SER         : 10.05%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_0244hrs
+Model           : rnn
+Pipeline        : raw (LogSpectrogram, 16ch, 2000 Hz)
+Device          : cuda
+Parameters      : 5,758,883
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 01:39:19 (5959.9s)
+--- Hyperparameters ---
+  lr=0.0004584197485106983
+  weight_decay=0.05407136503563504
+  hidden_size=512
+  num_layers=1
+  dropout=0.44212708840605874
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 18.76%
+  Test CER         : 18.24%
+  Test IER         : 4.43%
+  Test DER         : 1.97%
+  Test SER         : 11.84%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_0438hrs
+Model           : conformer
+Pipeline        : raw (LogSpectrogram, 16ch, 2000 Hz)
+Device          : cuda
+Parameters      : 3,806,627
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 01:53:07 (6787.6s)
+--- Hyperparameters ---
+  lr=0.0008453241881083158
+  weight_decay=0.02095814679480875
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.11692790270649321
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 11.98%
+  Test CER         : 14.10%
+  Test IER         : 2.71%
+  Test DER         : 1.56%
+  Test SER         : 9.83%
+#################################################

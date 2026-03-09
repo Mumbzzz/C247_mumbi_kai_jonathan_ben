@@ -1,0 +1,2 @@
+﻿epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
+150,16,1000,0.886090573,mel_spectrogram,0.081810204,0.79972417,14.28887904,15.89432655,10345.84766,

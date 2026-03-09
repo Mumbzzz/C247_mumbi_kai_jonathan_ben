@@ -1,0 +1,2 @@
+﻿run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
+RNN_16ch_1000hz_95pct_20260308_135636,3/8/2026 16:23,RNN,150,16,1000,0.947381423,mel_spectrogram,0.754760394,0.733065937,22.90651307,22.75772639,8804.054948,
