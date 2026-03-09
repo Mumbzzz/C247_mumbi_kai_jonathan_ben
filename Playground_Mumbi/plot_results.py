@@ -86,7 +86,7 @@ def _find_elbow(fractions: list[float], cers: list[float], threshold: float = 3.
 # Plot 1: Val CER and Test CER vs Training Fraction
 # ---------------------------------------------------------------------------
 
-def plot_cer_vs_fraction(summary: pd.DataFrame, model: str) -> None:
+def plot_cer_vs_fraction(summary: pd.DataFrame, model: str, display: str) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     fracs  = summary["train_fraction"].tolist()
@@ -101,31 +101,24 @@ def plot_cer_vs_fraction(summary: pd.DataFrame, model: str) -> None:
     ax.plot(x, test_cers, marker="s", color=UCLA_COLORS[1], linewidth=2,
             markersize=7, label="Test CER", zorder=3)
 
-    # Annotate points
+    # Annotate points — both always above their respective markers
     for i, (v, t) in enumerate(zip(val_cers, test_cers)):
         ax.annotate(f"{v:.1f}", (i, v), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=8, color=UCLA_COLORS[0])
         ax.annotate(f"{t:.1f}", (i, t), textcoords="offset points",
-                    xytext=(0, -14), ha="center", fontsize=8, color=UCLA_COLORS[1])
+                    xytext=(0, 8), ha="center", fontsize=8, color=UCLA_COLORS[1])
 
-    # Elbow point
+    # Elbow point — dashed vertical line only
     elbow_idx = _find_elbow(fracs, val_cers, threshold=3.0)
     if elbow_idx is not None:
         ax.axvline(x=elbow_idx, color=UCLA_COLORS[2], linestyle="--",
                    linewidth=1.5, label="Elbow (<3% marginal gain)", zorder=2)
-        ax.annotate(
-            f"Elbow\n{labels[elbow_idx]}",
-            xy=(elbow_idx, val_cers[elbow_idx]),
-            xytext=(elbow_idx + 0.15, val_cers[elbow_idx] + (max(val_cers) - min(val_cers)) * 0.1),
-            fontsize=8, color=UCLA_COLORS[2],
-            arrowprops=dict(arrowstyle="->", color=UCLA_COLORS[2], lw=1.2),
-        )
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f%%"))
     _apply_style(ax,
-                 title=f"Val CER and Test CER vs Training Fraction ({model})",
+                 title=f"Val CER and Test CER vs Training Fraction ({display})",
                  xlabel="Training Fraction",
                  ylabel="CER (%)")
     ax.legend(fontsize=9, framealpha=0.9)
@@ -142,7 +135,7 @@ def plot_cer_vs_fraction(summary: pd.DataFrame, model: str) -> None:
 # Plot 2: Training Curves – Val CER vs Epoch by Training Fraction
 # ---------------------------------------------------------------------------
 
-def plot_training_curves(curves: pd.DataFrame, summary: pd.DataFrame, model: str) -> None:
+def plot_training_curves(curves: pd.DataFrame, summary: pd.DataFrame, model: str, display: str) -> None:
     # Map run_id -> train_fraction using summary
     run_to_frac: dict[str, float] = dict(
         zip(summary["run_id"], summary["train_fraction"])
@@ -165,7 +158,7 @@ def plot_training_curves(curves: pd.DataFrame, summary: pd.DataFrame, model: str
 
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f%%"))
     _apply_style(ax,
-                 title=f"Val CER vs Epoch by Training Fraction ({model})",
+                 title=f"Val CER vs Epoch by Training Fraction ({display})",
                  xlabel="Epoch",
                  ylabel="Val CER (%)")
     ax.legend(title="Train Fraction", fontsize=9, title_fontsize=9, framealpha=0.9)
@@ -182,7 +175,7 @@ def plot_training_curves(curves: pd.DataFrame, summary: pd.DataFrame, model: str
 # Plot 3: Normalized Training Time vs Training Fraction
 # ---------------------------------------------------------------------------
 
-def plot_training_time(summary: pd.DataFrame, model: str) -> None:
+def plot_training_time(summary: pd.DataFrame, model: str, display: str) -> None:
     fracs  = summary["train_fraction"].tolist()
     labels = [_fraction_label(f) for f in fracs]
     times  = summary["training_time_sec"].tolist()
@@ -208,9 +201,9 @@ def plot_training_time(summary: pd.DataFrame, model: str) -> None:
                 ha="center", va="bottom", fontsize=9, fontweight="bold")
 
     # Note
-    ax.text(0.98, 0.97,
+    ax.text(0.02, 0.97,
             "Normalized to full dataset\ntraining time",
-            transform=ax.transAxes, fontsize=8, va="top", ha="right",
+            transform=ax.transAxes, fontsize=8, va="top", ha="left",
             color="#555555",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
                       edgecolor="#cccccc", alpha=0.8))
@@ -218,8 +211,9 @@ def plot_training_time(summary: pd.DataFrame, model: str) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylim(0, max(norm_times) * 1.18)
+    ax.spines["bottom"].set_zorder(10)
     _apply_style(ax,
-                 title=f"Normalized Training Time vs Training Fraction ({model})",
+                 title=f"Normalized Training Time vs Training Fraction ({display})",
                  xlabel="Training Fraction",
                  ylabel="Normalized Training Time")
     fig.tight_layout()
@@ -239,8 +233,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate training fraction ablation plots.")
     parser.add_argument("--model", default="CNN",
                         help="Model name suffix used in CSV filenames (default: CNN)")
+    parser.add_argument("--display-model", default=None,
+                        help="Model name shown in plot titles (default: same as --model)")
     args = parser.parse_args()
     model = args.model
+    display = args.display_model if args.display_model is not None else model
 
     summary = _load_summary(model)
     if summary is None or summary.empty:
@@ -248,17 +245,17 @@ def main() -> None:
         return
 
     # Plot 1
-    plot_cer_vs_fraction(summary, model)
+    plot_cer_vs_fraction(summary, model, display)
 
     # Plot 2 + 3 need curves / time columns
     curves = _load_curves(model, run_ids=summary["run_id"].tolist())
     if curves is not None and not curves.empty:
-        plot_training_curves(curves, summary, model)
+        plot_training_curves(curves, summary, model, display)
     else:
         print("[plot_results] No curves data available — skipping training curves plot.")
 
     if "training_time_sec" in summary.columns:
-        plot_training_time(summary, model)
+        plot_training_time(summary, model, display)
     else:
         print("[plot_results] training_time_sec column missing — skipping time plot.")
 
