@@ -16,7 +16,35 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pandas as pd
 
-UCLA_COLORS = ['#2D68C4', '#FFD100', '#003B5C', '#8BB8E8', '#00A5E0', '#005587']
+UCLA = {
+    "blue":       "#2774AE",
+    "gold":       "#FFD100",
+    "dark_blue":  "#003B5C",
+    "mid_blue":   "#005587",
+    "light_blue": "#8BB8EE",
+    "dark_gold":  "#FFB81C",
+}
+UCLA_COLORS = [
+    UCLA["blue"], UCLA["gold"], UCLA["dark_blue"],
+    UCLA["light_blue"], UCLA["mid_blue"], UCLA["dark_gold"],
+]
+
+matplotlib.rcParams.update({
+    "font.family":       "serif",
+    "font.serif":        ["Times New Roman"],
+    "font.size":         12,
+    "axes.titlesize":    14,
+    "axes.titleweight":  "bold",
+    "axes.labelsize":    12,
+    "axes.labelweight":  "bold",
+    "figure.facecolor":  "white",
+    "axes.facecolor":    "white",
+    "axes.spines.top":   False,
+    "axes.spines.right": False,
+    "xtick.labelsize":   10,
+    "ytick.labelsize":   10,
+    "legend.fontsize":   10,
+})
 
 FRACTIONS_ORDERED = [0.10, 0.25, 0.50, 0.75, 1.00]
 FRACTION_LABELS   = {0.10: "10%", 0.25: "25%", 0.50: "50%", 0.75: "75%", 1.00: "100%"}
@@ -30,12 +58,10 @@ PLOTS_DIR   = os.path.join(RESULTS_DIR, "training_fraction_ablation_plots")
 # ---------------------------------------------------------------------------
 
 def _apply_style(ax: plt.Axes, title: str, xlabel: str, ylabel: str) -> None:
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
-    ax.set_xlabel(xlabel, fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.6)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    ax.set_title(title, pad=10)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, linestyle="--", alpha=0.25)
     ax.tick_params(labelsize=10)
 
 
@@ -121,7 +147,7 @@ def plot_cer_vs_fraction(summary: pd.DataFrame, model: str, display: str) -> Non
                  title=f"Val CER and Test CER vs Training Fraction ({display})",
                  xlabel="Training Fraction",
                  ylabel="CER (%)")
-    ax.legend(fontsize=9, framealpha=0.9)
+    ax.legend(fontsize=9, framealpha=0.9, loc="upper right")
     fig.tight_layout()
 
     os.makedirs(PLOTS_DIR, exist_ok=True)
@@ -199,14 +225,6 @@ def plot_training_time(summary: pd.DataFrame, model: str, display: str) -> None:
                 bar.get_height() + 0.01,
                 f"{val:.2f}x",
                 ha="center", va="bottom", fontsize=9, fontweight="bold")
-
-    # Note
-    ax.text(0.02, 0.97,
-            "Normalized to full dataset\ntraining time",
-            transform=ax.transAxes, fontsize=8, va="top", ha="left",
-            color="#555555",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                      edgecolor="#cccccc", alpha=0.8))
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels)

@@ -22,12 +22,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 PLAYGROUND="${REPO_ROOT}/Playground_Mumbi"
 
+EPOCHS="${EPOCHS:-80}"
 HYPERPARAMS="${HYPERPARAMS:-}"
 HP_FLAG=""
 if [[ -n "${HYPERPARAMS}" ]]; then
     HP_FLAG="--from-hyperparams ${HYPERPARAMS}"
     echo "==> Loading hyperparams from: ${HYPERPARAMS}"
 fi
+echo "==> Epochs per run: ${EPOCHS}"
 
 cd "${REPO_ROOT}"
 
