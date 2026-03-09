@@ -207,13 +207,6 @@ fig, ax = plt.subplots(figsize=(9, 5))
 ax.plot(hz_vals, val_cers,  "o-", color=UCLA["blue"], lw=2,   label="Val CER",  markersize=7)
 ax.plot(hz_vals, test_cers, "s-", color=UCLA["gold"], lw=2,   label="Test CER", markersize=7)
 
-for hz, vc, tc in zip(hz_vals, val_cers, test_cers):
-    if not np.isnan(vc):
-        ax.annotate(f"{vc:.1f}%",  (hz, vc),  textcoords="offset points",
-                    xytext=(0, 8),  ha="center", fontsize=8.5, color=UCLA["blue"])
-    if not np.isnan(tc):
-        ax.annotate(f"{tc:.1f}%",  (hz, tc),  textcoords="offset points",
-                    xytext=(0, -14), ha="center", fontsize=8.5, color=UCLA["dark_gold"])
 
 ax.set_xscale("log", base=2)
 ax.set_xticks(hz_vals)
@@ -298,13 +291,6 @@ fig.suptitle("Sampling Rate Ablation — CER vs. Training Speed", fontsize=14)
 # Left: CER
 ax1.plot(hz_vals, val_cers,  "o-", color=UCLA["blue"], lw=2, label="Val CER",  markersize=7)
 ax1.plot(hz_vals, test_cers, "s-", color=UCLA["gold"], lw=2, label="Test CER", markersize=7)
-for hz, vc, tc in zip(hz_vals, val_cers, test_cers):
-    if not np.isnan(vc):
-        ax1.annotate(f"{vc:.1f}%", (hz, vc), textcoords="offset points",
-                     xytext=(0, 8),   ha="center", fontsize=8, color=UCLA["blue"])
-    if not np.isnan(tc):
-        ax1.annotate(f"{tc:.1f}%", (hz, tc), textcoords="offset points",
-                     xytext=(0, -14), ha="center", fontsize=8, color=UCLA["dark_gold"])
 ax1.set_xscale("log", base=2)
 ax1.set_xticks(hz_vals)
 ax1.set_xticklabels([f"{hz} Hz" for hz in hz_vals])
@@ -320,9 +306,6 @@ ax1.grid(True, alpha=0.25, linestyle="--")
 speed_data = [(hz, sp) for hz, sp in zip(hz_vals, speedups) if hz != 2000]
 sp_hz, sp_vals = zip(*speed_data) if speed_data else ([], [])
 ax2.plot(sp_hz, sp_vals, "o-", color=UCLA["dark_blue"], lw=2, markersize=7)
-for hz, sp in zip(sp_hz, sp_vals):
-    ax2.annotate(f"{sp:.0f}%", (hz, sp), textcoords="offset points",
-                 xytext=(0, 8), ha="center", fontsize=8.5, color=UCLA["dark_blue"])
 ax2.set_xscale("log", base=2)
 ax2.set_xticks(list(sp_hz))
 ax2.set_xticklabels([f"{hz} Hz" for hz in sp_hz])

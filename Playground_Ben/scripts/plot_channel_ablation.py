@@ -186,13 +186,6 @@ fig, ax = plt.subplots(figsize=(8, 5))
 ax.plot(ch_vals, val_cers,  "o-", color=UCLA["blue"], lw=2, label="Val CER",  markersize=7)
 ax.plot(ch_vals, test_cers, "s-", color=UCLA["gold"], lw=2, label="Test CER", markersize=7)
 
-for ch, vc, tc in zip(ch_vals, val_cers, test_cers):
-    if not np.isnan(vc):
-        ax.annotate(f"{vc:.1f}%", (ch, vc), textcoords="offset points",
-                    xytext=(0, 8),   ha="center", fontsize=8.5, color=UCLA["blue"])
-    if not np.isnan(tc):
-        ax.annotate(f"{tc:.1f}%", (ch, tc), textcoords="offset points",
-                    xytext=(0, -14), ha="center", fontsize=8.5, color=UCLA["dark_gold"])
 
 ax.set_xticks(ch_vals)
 ax.set_xticklabels([f"{c} ch/hand" for c in ch_vals])
@@ -268,13 +261,6 @@ fig.suptitle("Channel Count Ablation — CER vs. Training Speed  (2000 Hz)", fon
 # Left: CER
 ax1.plot(ch_vals, val_cers,  "o-", color=UCLA["blue"], lw=2, label="Val CER",  markersize=7)
 ax1.plot(ch_vals, test_cers, "s-", color=UCLA["gold"], lw=2, label="Test CER", markersize=7)
-for ch, vc, tc in zip(ch_vals, val_cers, test_cers):
-    if not np.isnan(vc):
-        ax1.annotate(f"{vc:.1f}%", (ch, vc), textcoords="offset points",
-                     xytext=(0, 8),   ha="center", fontsize=8, color=UCLA["blue"])
-    if not np.isnan(tc):
-        ax1.annotate(f"{tc:.1f}%", (ch, tc), textcoords="offset points",
-                     xytext=(0, -14), ha="center", fontsize=8, color=UCLA["dark_gold"])
 ax1.set_xticks(ch_vals)
 ax1.set_xticklabels([f"{c} ch/hand" for c in ch_vals])
 ax1.set_xlabel("Electrode Channels per Hand")
@@ -288,9 +274,6 @@ ax1.grid(True, alpha=0.25, linestyle="--")
 sp_data = [(ch, sp) for ch, sp in zip(ch_vals, speedups) if ch != 16]
 sp_ch, sp_vals = zip(*sp_data) if sp_data else ([], [])
 ax2.plot(sp_ch, sp_vals, "o-", color=UCLA["dark_blue"], lw=2, markersize=7)
-for ch, sp in zip(sp_ch, sp_vals):
-    ax2.annotate(f"{sp:.0f}%", (ch, sp), textcoords="offset points",
-                 xytext=(0, 8), ha="center", fontsize=8.5, color=UCLA["dark_blue"])
 ax2.set_xticks(list(sp_ch))
 ax2.set_xticklabels([f"{c} ch/hand" for c in sp_ch])
 ax2.set_xlabel("Electrode Channels per Hand")
