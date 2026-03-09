@@ -395,3 +395,51 @@ Total train time: 02:26:44 (8804.1s)
   Test DER         : 2.85%
   Test SER         : 15.02%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260308_1740hrs
+Model           : rnn
+Pipeline        : channel-half (8ch LogSpectrogram, 2000 Hz)
+Device          : cuda
+Parameters      : 11,855,747
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:03:02 (182.9s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  hidden_size=512
+  num_layers=2
+  dropout=0.2
+  batch_size=2
+  window_length=8000
+--- Results ---
+  Best val CER    : inf%
+  Test CER         : 100.00%
+  Test IER         : 100.00%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260308_1916hrs
+Model           : rnn
+Pipeline        : channel-half (8ch LogSpectrogram, 2000 Hz)
+Device          : cuda
+Parameters      : 5,556,099
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 01:32:49 (5570.0s)
+--- Hyperparameters ---
+  lr=0.0004584197485106983
+  weight_decay=0.05407136503563504
+  hidden_size=512
+  num_layers=1
+  dropout=0.44212708840605874
+  batch_size=32
+  window_length=8000
+--- Results ---
+  Best val CER    : 21.13%
+  Test CER         : 22.39%
+  Test IER         : 5.08%
+  Test DER         : 2.74%
+  Test SER         : 14.57%
+#################################################

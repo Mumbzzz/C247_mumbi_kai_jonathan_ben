@@ -84,6 +84,9 @@ MEL_FMAX: float = 450.0
 
 # Exported for model construction
 IN_FEATURES: int = N_ELECTRODE_CHANNELS * N_MELS  # 8 * 32 = 256
+# Features for channel-selection-only on the raw LogSpectrogram pipeline:
+# 8 channels/band × (n_fft//2 + 1) = 8 × 33 = 264  (n_fft=64 default)
+CHANNEL_HALF_IN_FEATURES: int = N_ELECTRODE_CHANNELS * (64 // 2 + 1)  # 264
 
 
 # ---------------------------------------------------------------------------

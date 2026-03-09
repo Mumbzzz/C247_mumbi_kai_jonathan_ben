@@ -37,7 +37,11 @@ from emg2qwerty.transforms import (
     ToTensor,
 )
 
-from Playground_Kai.data_preprocess import build_preprocess_transform
+from Playground_Kai.data_preprocess import (
+    build_preprocess_transform,
+    ChannelSelector,
+    DEFAULT_CHANNELS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -52,23 +56,32 @@ def _build_train_transform(
     time_mask_param: int = 25,
     n_freq_masks: int = 2,
     freq_mask_param: int = 4,
+    channel_half: bool = False,
 ):
     """Build the augmented transform pipeline used during training.
 
-    Pipeline: ToTensor → ForEach(RandomBandRotation) → TemporalAlignmentJitter
-              → LogSpectrogram → SpecAugment
+    Pipeline (channel_half=False): ToTensor → ForEach(RandomBandRotation)
+        → TemporalAlignmentJitter → LogSpectrogram → SpecAugment
+    Pipeline (channel_half=True):  same but ChannelSelector inserted after
+        TemporalAlignmentJitter, before LogSpectrogram.
 
-    Output shape: (T', 2, 16, freq) where T' = (T - max_offset) / hop_length
+    Output shape: (T', 2, C, freq) where C=16 normally, C=8 with channel_half,
     and freq = n_fft // 2 + 1.
     """
-    return Compose([
+    steps = [
         # Raw EMG structured array → (T, 2, 16) float tensor
         ToTensor(fields=["emg_left", "emg_right"]),
         # Independently rotate electrode channels for each band (i.i.d. offset)
+        # Run on all 16 channels before any selection so rotation is well-defined.
         ForEach(RandomBandRotation(offsets=[-1, 0, 1])),
         # Randomly jitter temporal alignment between left and right wrist
         TemporalAlignmentJitter(max_offset=max_offset),
-        # Compute log-spectrogram: (T, 2, 16) → (T', 2, 16, freq)
+    ]
+    if channel_half:
+        # Keep 8 of 16 electrodes per band before the spectrogram step.
+        steps.append(ChannelSelector(DEFAULT_CHANNELS))
+    steps += [
+        # Compute log-spectrogram: (T, 2, C) → (T', 2, C, freq)
         LogSpectrogram(n_fft=n_fft, hop_length=hop_length),
         # Time and frequency masking augmentation
         SpecAugment(
@@ -77,18 +90,21 @@ def _build_train_transform(
             n_freq_masks=n_freq_masks,
             freq_mask_param=freq_mask_param,
         ),
-    ])
+    ]
+    return Compose(steps)
 
 
-def _build_eval_transform(n_fft: int = 64, hop_length: int = 16):
+def _build_eval_transform(n_fft: int = 64, hop_length: int = 16, channel_half: bool = False):
     """Build the deterministic transform pipeline used for val/test.
 
-    Pipeline: ToTensor → LogSpectrogram
+    Pipeline (channel_half=False): ToTensor → LogSpectrogram
+    Pipeline (channel_half=True):  ToTensor → ChannelSelector → LogSpectrogram
     """
-    return Compose([
-        ToTensor(fields=["emg_left", "emg_right"]),
-        LogSpectrogram(n_fft=n_fft, hop_length=hop_length),
-    ])
+    steps = [ToTensor(fields=["emg_left", "emg_right"])]
+    if channel_half:
+        steps.append(ChannelSelector(DEFAULT_CHANNELS))
+    steps.append(LogSpectrogram(n_fft=n_fft, hop_length=hop_length))
+    return Compose(steps)
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +159,7 @@ def get_dataloaders(
     num_workers: int = 0,
     test_window_length: Optional[int] = None,
     preprocess: bool = False,
+    channel_half: bool = False,
 ) -> dict[str, DataLoader]:
     """Build train/val/test DataLoaders from the single_user split config.
 
@@ -171,10 +188,10 @@ def get_dataloaders(
     session_paths = get_session_paths(data_root=data_root, config_path=config_path)
     if preprocess:
         train_transform = build_preprocess_transform(augment=True)
-        eval_transform = build_preprocess_transform(augment=False)
+        eval_transform  = build_preprocess_transform(augment=False)
     else:
-        train_transform = _build_train_transform()
-        eval_transform = _build_eval_transform()
+        train_transform = _build_train_transform(channel_half=channel_half)
+        eval_transform  = _build_eval_transform(channel_half=channel_half)
 
     train_dataset = ConcatDataset([
         WindowedEMGDataset(
@@ -254,6 +271,7 @@ def build_loaders_from_paths(
     batch_size: int = 32,
     num_workers: int = 0,
     preprocess: bool = False,
+    channel_half: bool = False,
 ) -> dict[str, DataLoader]:
     """Build train and val DataLoaders from explicit session path lists.
 
@@ -275,10 +293,10 @@ def build_loaders_from_paths(
     """
     if preprocess:
         train_transform = build_preprocess_transform(augment=True)
-        eval_transform = build_preprocess_transform(augment=False)
+        eval_transform  = build_preprocess_transform(augment=False)
     else:
-        train_transform = _build_train_transform()
-        eval_transform = _build_eval_transform()
+        train_transform = _build_train_transform(channel_half=channel_half)
+        eval_transform  = _build_eval_transform(channel_half=channel_half)
 
     train_dataset = ConcatDataset([
         WindowedEMGDataset(

@@ -47,6 +47,7 @@ from Playground_Kai.model import RNNEncoder, ConformerEncoder
 from Playground_Kai.data_preprocess import (
     IN_FEATURES as PREP_IN_FEATURES,
     N_ELECTRODE_CHANNELS as PREP_N_CHANNELS,
+    CHANNEL_HALF_IN_FEATURES,
 )
 from scripts.logger import log_epoch, log_summary, make_run_id
 
@@ -248,11 +249,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", type=Path, default=None,
                    help="Checkpoint .pt file to resume training from")
     p.add_argument("--test-only", action="store_true",
-                   help="Skip training: load best_{model}_{in_features}.pt and run test evaluation only")
-    p.add_argument("--preprocess", action="store_true",
-                   help="Use the full preprocessing pipeline (notch + bandpass + decimation + Mel STFT) "
-                        "instead of the raw LogSpectrogram pipeline. "
-                        "Checkpoints from each pipeline are stored separately.")
+                   help="Skip training: load the best checkpoint and run test evaluation only")
+    _pipeline = p.add_mutually_exclusive_group()
+    _pipeline.add_argument("--preprocess", action="store_true",
+                           help="Full preprocessing pipeline: notch + bandpass + decimate + Mel STFT. "
+                                "Saves checkpoint as best_{model}_256.pt.")
+    _pipeline.add_argument("--channel-half", action="store_true",
+                           help="Channel-selection only: keep 8 of 16 electrodes per band, "
+                                "then raw LogSpectrogram (no filtering/decimation). "
+                                "Saves checkpoint as best_{model}_channelhalf.pt.")
     p.add_argument("--from-hyperparams", type=Path, default=None,
                    help="YAML file of hyperparameters (e.g. from hyperparam_tuner.py)")
     p.add_argument("--notes", type=str, default="",
@@ -272,18 +277,34 @@ def main() -> None:
 
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    # Derive input/output dimensions based on the preprocessing flag.
-    # Preprocessed pipeline: 8 channels/band × 32 Mel bins = 256 features.
-    # Raw pipeline:          16 channels/band × 33 STFT bins = 528 features.
-    in_features = PREP_IN_FEATURES if args.preprocess else 528
-    electrode_channels = PREP_N_CHANNELS if args.preprocess else 16
-    ckpt_stem = f"best_{args.model}_{in_features}"
+    # Derive input/output dimensions and checkpoint name based on the pipeline flag.
+    #   --preprocess    : 8 channels/band × 32 Mel bins  = 256 features
+    #   --channel-half  : 8 channels/band × 33 STFT bins = 264 features
+    #   (default)       : 16 channels/band × 33 STFT bins = 528 features
+    if args.preprocess:
+        in_features        = PREP_IN_FEATURES        # 256
+        electrode_channels = PREP_N_CHANNELS         # 8
+        ckpt_stem          = f"best_{args.model}_{in_features}"
+    elif args.channel_half:
+        in_features        = CHANNEL_HALF_IN_FEATURES  # 264
+        electrode_channels = PREP_N_CHANNELS           # 8
+        ckpt_stem          = f"best_{args.model}_channelhalf"
+    else:
+        in_features        = 528
+        electrode_channels = 16
+        ckpt_stem          = f"best_{args.model}_{in_features}"
 
     # Logger metadata that differs between pipelines
-    _num_channels = electrode_channels * 2  # ×2 wrists
-    _sampling_rate = 1000 if args.preprocess else 2000
-    _input_type = "mel_spectrogram" if args.preprocess else "spectrogram"
-    print(f"Pipeline    : {'preprocessed (notch+bandpass+decimate+Mel)' if args.preprocess else 'raw (LogSpectrogram)'}")
+    _num_channels  = electrode_channels * 2  # ×2 wrists
+    _sampling_rate = 1000 if args.preprocess else 2000  # channel_half keeps 2000 Hz
+    _input_type    = "mel_spectrogram" if args.preprocess else "spectrogram"
+    if args.preprocess:
+        _pipeline_label = "preprocessed (notch+bandpass+decimate+Mel)"
+    elif args.channel_half:
+        _pipeline_label = "channel-half (8ch LogSpectrogram, 2000 Hz)"
+    else:
+        _pipeline_label = "raw (LogSpectrogram, 16ch, 2000 Hz)"
+    print(f"Pipeline    : {_pipeline_label}")
 
     # ------------------------------------------------------------------
     # Data
@@ -297,6 +318,7 @@ def main() -> None:
         num_workers=args.num_workers,
         test_window_length=args.window_length if args.model == "conformer" else None,
         preprocess=args.preprocess,
+        channel_half=args.channel_half,
     )
     if args.test_only:
         print(f"  test batches  : {len(loaders['test'])}")
@@ -347,10 +369,18 @@ def main() -> None:
 
         # Rebuild the model from the hyperparams that were used during training,
         # not from CLI defaults.  The checkpoint stores args as a plain dict.
-        saved_args = ckpt.get("args", {})
-        saved_preprocess = saved_args.get("preprocess", False)
-        saved_in_features = PREP_IN_FEATURES if saved_preprocess else 528
-        saved_elec_ch = PREP_N_CHANNELS if saved_preprocess else 16
+        saved_args         = ckpt.get("args", {})
+        saved_preprocess   = saved_args.get("preprocess", False)
+        saved_channel_half = saved_args.get("channel_half", False)
+        if saved_preprocess:
+            saved_in_features = PREP_IN_FEATURES
+            saved_elec_ch     = PREP_N_CHANNELS
+        elif saved_channel_half:
+            saved_in_features = CHANNEL_HALF_IN_FEATURES
+            saved_elec_ch     = PREP_N_CHANNELS
+        else:
+            saved_in_features = 528
+            saved_elec_ch     = 16
         if args.model == "conformer":
             model = ConformerEncoder(
                 in_features=saved_in_features,
@@ -394,7 +424,8 @@ def main() -> None:
             sampling_rate_hz=1000 if saved_preprocess else 2000,
             train_fraction=_train_fraction,
         )
-        _notes = (args.notes + " " if args.notes else "") + "test_only"
+        _pipeline_notes = "channel_half" if saved_channel_half else ("" if not saved_preprocess else "")
+        _notes = " ".join(filter(None, [args.notes, _pipeline_notes, "test_only"]))
         log_summary(
             _run_id,
             model=_logger_model,
@@ -560,7 +591,7 @@ def main() -> None:
         final_val_cer=_final_val_cer,
         test_cer=test_metrics.get("CER", float("nan")),
         training_time_sec=total_training_time,
-        notes=args.notes,
+        notes=" ".join(filter(None, ["channel_half" if args.channel_half else "", args.notes])),
     )
 
     # ------------------------------------------------------------------
@@ -573,7 +604,7 @@ def main() -> None:
         log_f.write("\n################### New Entry ###################\n")
         log_f.write(f"Run timestamp   : {run_timestamp}\n")
         log_f.write(f"Model           : {args.model}\n")
-        log_f.write(f"Pipeline        : {'preprocessed' if args.preprocess else 'raw (LogSpectrogram)'}\n")
+        log_f.write(f"Pipeline        : {_pipeline_label}\n")
         log_f.write(f"Device          : {device}\n")
         log_f.write(f"Parameters      : {sum(p.numel() for p in model.parameters()):,}\n")
         log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}\n")
