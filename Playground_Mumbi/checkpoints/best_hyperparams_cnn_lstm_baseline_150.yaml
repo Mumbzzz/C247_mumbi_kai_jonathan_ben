@@ -1,0 +1,18 @@
+lr: 0.001317290567735514
+weight_decay: 2.5368363308392836e-05
+cnn_channels: 384
+cnn_kernel: 3
+cnn_layers: 3
+lstm_hidden: 512
+lstm_layers: 1
+dropout: 0.14624289264678947
+trial_val_cer: 37.5942
+search_mode: two-phase
+search_phase_found: F1
+num_coarse_trials: 20
+num_fine_trials: 30
+coarse_epochs: 15
+fine_epochs: 25
+num_trial_sessions: 5
+fine_shrink: 3.0
+tuned_at: '2026-03-08 20:18:34'

@@ -150,6 +150,8 @@ def run_trial(
     device: torch.device,
     timeout_secs: float = float("inf"),
     early_stopping_patience: int = 0,
+    num_channels: int = 16,
+    channel_indices: list[int] | None = None,
 ) -> tuple[float, bool, int]:
     """Run one proxy training trial.
 
@@ -177,15 +179,17 @@ def run_trial(
         val_paths=val_paths,
         window_length=window_length,
         batch_size=batch_size,
+        channel_indices=channel_indices,
     )
 
     # Dropout has no effect with a single LSTM layer
     effective_dropout = config["dropout"] if config["lstm_layers"] > 1 else 0.0
 
     model = CNNLSTMModel(
-        in_features=528,
+        in_features=num_channels * 33,  # 33 = n_fft//2+1 for n_fft=64
         mlp_features=[384],
         num_bands=2,
+        electrode_channels=num_channels,
         cnn_channels=config["cnn_channels"],
         cnn_kernel=config["cnn_kernel"],
         cnn_layers=config["cnn_layers"],
@@ -319,6 +323,8 @@ def _run_phase(
     all_results_so_far: list[TrialResult] | None = None,
     args: argparse.Namespace | None = None,
     coarse_epochs: int = 0,
+    num_channels: int = 16,
+    channel_indices: list[int] | None = None,
 ) -> list[TrialResult]:
     """Run *num_trials* proxy trials and return all results.
 
@@ -355,6 +361,8 @@ def _run_phase(
                 device=device,
                 timeout_secs=timeout_secs,
                 early_stopping_patience=early_stopping_patience,
+                num_channels=num_channels,
+                channel_indices=channel_indices,
             )
         except KeyboardInterrupt:
             print(
@@ -470,6 +478,13 @@ def parse_args() -> argparse.Namespace:
                    help="Raw EMG samples per training window (8000 = 4 s @ 2 kHz)")
     p.add_argument("--seed", type=int, default=42,
                    help="Global random seed for reproducibility")
+    # Channel selection (set from ablation findings)
+    p.add_argument("--num-channels", type=int, default=16,
+                   help="Electrode channels per hand used in each trial (default: 16 = all). "
+                        "Set this to the best channel count found from the channel ablation.")
+    p.add_argument("--channel-indices", type=int, nargs="+", default=None,
+                   help="Electrode indices to keep per hand (e.g. 0 2 4 6 8 10 12 14). "
+                        "Must be consistent with --num-channels. Omit to use all 16.")
     return p.parse_args()
 
 
@@ -477,8 +492,24 @@ def parse_args() -> argparse.Namespace:
 # Main
 # ---------------------------------------------------------------------------
 
+def _resolve_channel_indices(args: argparse.Namespace) -> None:
+    """Auto-compute channel_indices from num_channels if not explicitly provided.
+
+    Uses the same even-stride pattern as Ben's channel ablation YAML configs:
+        16 ch/hand → None (all channels, no ChannelSelect applied)
+         8 ch/hand → [0, 2, 4, 6, 8, 10, 12, 14]   (stride 2)
+         4 ch/hand → [0, 4, 8, 12]                  (stride 4)
+         2 ch/hand → [0, 8]                          (stride 8)
+    """
+    if args.channel_indices is not None or args.num_channels == 16:
+        return
+    stride = 16 // args.num_channels
+    args.channel_indices = list(range(0, 16, stride))
+
+
 def main() -> None:
     args = parse_args()
+    _resolve_channel_indices(args)
 
     # Resolve backward-compat aliases: explicit --coarse-* flags override --num-trials / --trial-epochs
     coarse_trials = args.coarse_trials if args.coarse_trials is not None else args.num_trials
@@ -509,6 +540,7 @@ def main() -> None:
     # ---- Startup banner ----
     print(f"Device            : {device}")
     print(f"Model             : CNN+LSTM")
+    print(f"Channels/hand     : {args.num_channels}  indices={args.channel_indices or 'all'}")
     print(f"Search mode       : {args.search_mode}")
     print(f"Train sessions    : {len(trial_train_paths)} / {len(all_train_paths)}")
     print(f"Val sessions      : {len(val_paths)}")
@@ -559,6 +591,8 @@ def main() -> None:
         all_results_so_far=[],
         args=args,
         coarse_epochs=coarse_epochs,
+        num_channels=args.num_channels,
+        channel_indices=args.channel_indices,
     )
     all_results.extend(coarse_results)
 
@@ -600,6 +634,8 @@ def main() -> None:
                 all_results_so_far=coarse_results,
                 args=args,
                 coarse_epochs=coarse_epochs,
+                num_channels=args.num_channels,
+                channel_indices=args.channel_indices,
             )
             fine_results.extend(phase_results)
             fine_trial_offset += args.fine_trials
@@ -643,6 +679,8 @@ def main() -> None:
                 device=device,
                 timeout_secs=timeout_secs,
                 early_stopping_patience=args.early_stopping_patience,
+                num_channels=args.num_channels,
+                channel_indices=args.channel_indices,
             )
         except KeyboardInterrupt:
             confirm_cer = best_cer

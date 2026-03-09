@@ -120,6 +120,7 @@ class CNNLSTMModel(nn.Module):
         in_features: int = 528,
         mlp_features: list[int] = [384],
         num_bands: int = 2,
+        electrode_channels: int = 16,
         cnn_channels: int = 256,
         cnn_kernel: int = 3,
         cnn_layers: int = 2,
@@ -132,9 +133,9 @@ class CNNLSTMModel(nn.Module):
 
         # --- Preprocessing (reused from emg2qwerty, identical to RNNEncoder) ---
 
-        # Per-channel batch normalisation over (T, N, 2, 16, freq)
+        # Per-channel batch normalisation over (T, N, 2, electrode_channels, freq)
         self.spec_norm = SpectrogramNorm(
-            channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS  # 32
+            channels=self.NUM_BANDS * electrode_channels
         )
 
         # Per-band rotation-invariant MLP:

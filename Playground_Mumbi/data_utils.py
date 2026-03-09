@@ -36,6 +36,7 @@ if str(_ROOT) not in sys.path:
 
 from emg2qwerty.data import WindowedEMGDataset
 from emg2qwerty.transforms import (
+    ChannelSelect,
     Compose,
     ForEach,
     LogSpectrogram,
@@ -58,16 +59,17 @@ def _build_train_transform(
     time_mask_param: int = 25,
     n_freq_masks: int = 2,
     freq_mask_param: int = 4,
+    channel_indices: list[int] | None = None,
 ):
     """Build the augmented transform pipeline used during training.
 
     Pipeline: ToTensor → ForEach(RandomBandRotation) → TemporalAlignmentJitter
-              → LogSpectrogram → SpecAugment
+              → LogSpectrogram → [ChannelSelect] → SpecAugment
 
-    Output shape: (T', 2, 16, freq) where T' = (T - max_offset) / hop_length
-    and freq = n_fft // 2 + 1.
+    Output shape: (T', 2, C, freq) where C = len(channel_indices) or 16,
+    T' = (T - max_offset) / hop_length, freq = n_fft // 2 + 1.
     """
-    return Compose([
+    steps = [
         # Raw EMG structured array → (T, 2, 16) float tensor
         ToTensor(fields=["emg_left", "emg_right"]),
         # Independently rotate electrode channels for each band (i.i.d. offset)
@@ -76,25 +78,37 @@ def _build_train_transform(
         TemporalAlignmentJitter(max_offset=max_offset),
         # Compute log-spectrogram: (T, 2, 16) → (T', 2, 16, freq)
         LogSpectrogram(n_fft=n_fft, hop_length=hop_length),
+    ]
+    if channel_indices is not None:
+        steps.append(ChannelSelect(indices=channel_indices))
+    steps.append(
         # Time and frequency masking augmentation
         SpecAugment(
             n_time_masks=n_time_masks,
             time_mask_param=time_mask_param,
             n_freq_masks=n_freq_masks,
             freq_mask_param=freq_mask_param,
-        ),
-    ])
+        )
+    )
+    return Compose(steps)
 
 
-def _build_eval_transform(n_fft: int = 64, hop_length: int = 16):
+def _build_eval_transform(
+    n_fft: int = 64,
+    hop_length: int = 16,
+    channel_indices: list[int] | None = None,
+):
     """Build the deterministic transform pipeline used for val/test.
 
-    Pipeline: ToTensor → LogSpectrogram
+    Pipeline: ToTensor → LogSpectrogram → [ChannelSelect]
     """
-    return Compose([
+    steps = [
         ToTensor(fields=["emg_left", "emg_right"]),
         LogSpectrogram(n_fft=n_fft, hop_length=hop_length),
-    ])
+    ]
+    if channel_indices is not None:
+        steps.append(ChannelSelect(indices=channel_indices))
+    return Compose(steps)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +163,7 @@ def get_dataloaders(
     num_workers: int = 0,
     test_window_length: Optional[int] = None,
     train_fraction: float = 1.0,
+    channel_indices: list[int] | None = None,
 ) -> dict[str, DataLoader]:
     """Build train/val/test DataLoaders from the single_user split config.
 
@@ -188,8 +203,8 @@ def get_dataloaders(
     )
 
     session_paths = get_session_paths(data_root=data_root, config_path=config_path)
-    train_transform = _build_train_transform()
-    eval_transform = _build_eval_transform()
+    train_transform = _build_train_transform(channel_indices=channel_indices)
+    eval_transform = _build_eval_transform(channel_indices=channel_indices)
 
     train_dataset = ConcatDataset([
         WindowedEMGDataset(
@@ -280,6 +295,7 @@ def build_loaders_from_paths(
     padding: tuple[int, int] = (1800, 200),
     batch_size: int = 32,
     num_workers: int = 0,
+    channel_indices: list[int] | None = None,
 ) -> dict[str, DataLoader]:
     """Build train and val DataLoaders from explicit session path lists.
 
@@ -299,8 +315,8 @@ def build_loaders_from_paths(
     Returns:
         Dict with keys ``'train'`` and ``'val'`` mapping to DataLoaders.
     """
-    train_transform = _build_train_transform()
-    eval_transform = _build_eval_transform()
+    train_transform = _build_train_transform(channel_indices=channel_indices)
+    eval_transform = _build_eval_transform(channel_indices=channel_indices)
 
     train_dataset = ConcatDataset([
         WindowedEMGDataset(

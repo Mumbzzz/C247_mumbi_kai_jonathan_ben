@@ -6,7 +6,7 @@ Run from the workspace root with:
 
 Key flags (all have defaults, so a bare invocation will start training):
     --model             Which model to train: cnn (default) or cnn_lstm
-    --epochs            Number of training epochs          (default: 80)
+    --epochs            Number of training epochs          (default: 150)
     --batch-size        Batch size                         (default: 32)
     --lr                Peak learning rate                 (default: 1e-3)
     --train-fraction    Fraction of training windows to use (default: 1.0)
@@ -72,7 +72,8 @@ from scripts.logger import log_epoch, log_summary, make_run_id
 
 _NUM_BANDS: int = 2
 _ELECTRODE_CHANNELS: int = 16
-_IN_FEATURES: int = 528           # (n_fft // 2 + 1) * 16 = 33 * 16
+_FREQ_BINS: int = 33              # n_fft // 2 + 1 = 64 // 2 + 1
+_IN_FEATURES: int = 528           # _FREQ_BINS * _ELECTRODE_CHANNELS = 33 * 16
 _MLP_FEATURES: list[int] = [384]
 _BLOCK_CHANNELS: list[int] = [24, 24, 24, 24]
 _KERNEL_WIDTH: int = 32
@@ -136,16 +137,18 @@ def build_cnn_lstm_model(args: argparse.Namespace) -> nn.Module:
 
     Args:
         args: Parsed CLI arguments.  The following fields are used:
-            cnn_channels, cnn_kernel, cnn_layers,
+            num_channels, cnn_channels, cnn_kernel, cnn_layers,
             lstm_hidden, lstm_layers, dropout.
 
     Returns:
         A :class:`CNNLSTMModel` instance.
     """
+    in_features = args.num_channels * _FREQ_BINS
     return CNNLSTMModel(
-        in_features=_IN_FEATURES,
+        in_features=in_features,
         mlp_features=_MLP_FEATURES,
         num_bands=_NUM_BANDS,
+        electrode_channels=args.num_channels,
         cnn_channels=args.cnn_channels,
         cnn_kernel=args.cnn_kernel,
         cnn_layers=args.cnn_layers,
@@ -318,6 +321,7 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
         num_workers=args.num_workers,
         test_window_length=args.window_length,
         train_fraction=train_fraction,
+        channel_indices=args.channel_indices,
     )
     print(
         f"  train batches : {len(loaders['train'])}"
@@ -339,7 +343,7 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
     # ------------------------------------------------------------------
     run_id = make_run_id(
         model=model_name,
-        num_channels=32,
+        num_channels=args.num_channels,
         sampling_rate_hz=2000,
         train_fraction=train_fraction,
     )
@@ -446,6 +450,9 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
             if train_fraction < 1.0:
                 ckpt_dir = args.checkpoint_dir / "training_fraction_ablation"
                 ckpt_path = ckpt_dir / f"best_{model_slug}_{fraction_pct}pct.pt"
+            elif args.num_channels < 16:
+                ckpt_dir = args.checkpoint_dir / "channel_ablation"
+                ckpt_path = ckpt_dir / f"best_{model_slug}_{args.num_channels}ch.pt"
             else:
                 ckpt_dir = args.checkpoint_dir / "final_models"
                 ckpt_path = ckpt_dir / f"best_{model_slug}.pt"
@@ -475,6 +482,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
     model_slug = model_name.lower().replace("_", "")
     if train_fraction < 1.0:
         best_ckpt = args.checkpoint_dir / "training_fraction_ablation" / f"best_{model_slug}_{fraction_pct}pct.pt"
+    elif args.num_channels < 16:
+        best_ckpt = args.checkpoint_dir / "channel_ablation" / f"best_{model_slug}_{args.num_channels}ch.pt"
     else:
         best_ckpt = args.checkpoint_dir / "final_models" / f"best_{model_slug}.pt"
     if best_ckpt.exists():
@@ -495,7 +504,7 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
         run_id=run_id,
         model=model_name,
         epochs=epochs_completed,
-        num_channels=32,
+        num_channels=args.num_channels,
         sampling_rate_hz=2000,
         train_fraction=train_fraction,
         input_type="spectrogram",
@@ -532,7 +541,7 @@ def parse_args() -> argparse.Namespace:
                    default=Path(__file__).resolve().parent / "checkpoints",
                    help="Directory to write model checkpoints")
     # Training
-    p.add_argument("--epochs", type=int, default=80)
+    p.add_argument("--epochs", type=int, default=150)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--num-workers", type=int, default=0,
                    help="DataLoader workers (0 = main process, safest on Windows)")
@@ -555,6 +564,15 @@ def parse_args() -> argparse.Namespace:
                        "Run training sequentially for fractions "
                        f"{_ALL_FRACTIONS} and log each run with Playground_Mumbi.logger"
                    ))
+    # Channel ablation flags
+    p.add_argument("--num-channels", type=int, default=16,
+                   help="Electrode channels per hand after selection (default: 16 = all)")
+    p.add_argument("--channel-indices", type=int, nargs="+", default=None,
+                   help="Electrode indices to keep per hand (e.g. 0 2 4 6 8 10 12 14). "
+                        "When omitted all 16 channels are used.")
+    p.add_argument("--notes", type=str, default=None,
+                   help="Override the notes field written to the results CSV "
+                        "(e.g. ablation_channels). Computed automatically when omitted.")
     # CNN+LSTM architecture flags (only used when --model cnn_lstm)
     p.add_argument("--from-hyperparams", type=Path, default=None,
                    help="Path to a YAML file saved by hyperparam_tuner.py. "
@@ -584,8 +602,24 @@ def parse_args() -> argparse.Namespace:
 # Main
 # ---------------------------------------------------------------------------
 
+def _resolve_channel_indices(args: argparse.Namespace) -> None:
+    """Auto-compute channel_indices from num_channels if not explicitly provided.
+
+    Uses the same even-stride pattern as Ben's channel ablation YAML configs:
+        16 ch/hand → None (all channels, no ChannelSelect applied)
+         8 ch/hand → [0, 2, 4, 6, 8, 10, 12, 14]   (stride 2)
+         4 ch/hand → [0, 4, 8, 12]                  (stride 4)
+         2 ch/hand → [0, 8]                          (stride 8)
+    """
+    if args.channel_indices is not None or args.num_channels == 16:
+        return
+    stride = _ELECTRODE_CHANNELS // args.num_channels
+    args.channel_indices = list(range(0, _ELECTRODE_CHANNELS, stride))
+
+
 def main() -> None:
     args = parse_args()
+    _resolve_channel_indices(args)
 
     # If --from-hyperparams is given, load the tuner YAML and patch args.
     # Explicit CLI flags always win — we only overwrite fields that are still
@@ -615,7 +649,9 @@ def main() -> None:
 
     if args.model == "cnn_lstm":
         # CNN+LSTM: single full training run (no fraction sweep)
-        notes = "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
+        notes = args.notes or (
+            "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
+        )
         run_training(
             args,
             train_fraction=args.train_fraction,
@@ -631,7 +667,9 @@ def main() -> None:
                 run_training(args, train_fraction=frac, notes="ablation_train_fraction",
                              model_name="CNN", model=build_model())
         else:
-            notes = "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
+            notes = args.notes or (
+                "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
+            )
             run_training(args, train_fraction=args.train_fraction, notes=notes,
                          model_name="CNN", model=build_model())
 
