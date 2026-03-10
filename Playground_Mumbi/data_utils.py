@@ -7,7 +7,10 @@ Supports a train_fraction parameter to use only the first X% of
 training windows chronologically, enabling data-fraction ablation
 studies without changing the val/test splits.
 
-Typical usage:
+Also provides latent-space data loading via LatentEMGDataset and
+get_latent_dataloaders for use with data/preprocessed/*.hdf5 files.
+
+Typical usage (raw EMG):
     from Playground_Mumbi.data_utils import get_dataloaders
     loaders = get_dataloaders(
         data_root=Path("data"),
@@ -16,6 +19,14 @@ Typical usage:
     )
     for batch in loaders["train"]:
         inputs = batch["inputs"]   # (T, N, 2, 16, freq)
+        targets = batch["targets"] # (T_tgt, N)
+        ...
+
+Typical usage (latent):
+    from Playground_Mumbi.data_utils import get_latent_dataloaders
+    loaders = get_latent_dataloaders(Path("data/preprocessed/emg_latent_ae_v2.hdf5"))
+    for batch in loaders["train"]:
+        inputs = batch["inputs"]   # (T, N, 1024)
         targets = batch["targets"] # (T_tgt, N)
         ...
 """
@@ -359,6 +370,188 @@ def build_loaders_from_paths(
             shuffle=False,
             num_workers=num_workers,
             collate_fn=WindowedEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+    }
+
+
+# ===========================================================================
+# Latent EMG dataset helpers
+# (for data/preprocessed/*.hdf5 — pre-computed AE latent vectors, 1024-dim)
+# ===========================================================================
+
+import torch   # noqa: E402 — deferred alongside latent-only deps
+import h5py    # noqa: E402
+import json    # noqa: E402
+
+
+class LatentEMGDataset(torch.utils.data.Dataset):
+    """Windowed dataset over pre-computed latent EMG vectors.
+
+    Reads ``emg2qwerty/latent`` (N_frames × 1024 float32) and
+    ``emg2qwerty/time`` (N_frames float64) from a latent HDF5 file,
+    extracts keystroke labels from the ``keystrokes`` group attribute, and
+    yields ``(latent_window, labels)`` tuples compatible with
+    ``WindowedEMGDataset.collate``.
+
+    Args:
+        hdf5_path:     Path to the latent HDF5 file.
+        window_length: Number of latent frames per sample (default 125 ≈ 4 s
+                       at 32 ms/frame).
+        stride:        Latent-frame stride between consecutive windows.
+                       Defaults to ``window_length`` (no overlap).
+        frame_start:   First frame index to include (default 0).
+        frame_end:     One-past-the-last frame index (default: full length).
+        jitter:        If True, randomly jitter each window offset by up to
+                       one stride. Use for training only.
+    """
+
+    def __init__(
+        self,
+        hdf5_path: Path,
+        window_length: int = 125,
+        stride: Optional[int] = None,
+        frame_start: int = 0,
+        frame_end: Optional[int] = None,
+        jitter: bool = False,
+    ) -> None:
+        self.hdf5_path = hdf5_path
+        self.window_length = window_length
+        self.stride = stride if stride is not None else window_length
+        self.jitter = jitter
+
+        with h5py.File(hdf5_path, "r") as f:
+            grp = f["emg2qwerty"]
+            total_frames = grp["latent"].shape[0]
+            self.keystrokes: list = json.loads(grp.attrs.get("keystrokes", "[]"))
+
+        self.frame_start = frame_start
+        self.frame_end = frame_end if frame_end is not None else total_frames
+        self._n_frames = self.frame_end - self.frame_start
+
+        assert self.window_length > 0 and self.stride > 0
+        assert self._n_frames >= self.window_length, (
+            f"Split has only {self._n_frames} frames, need at least {self.window_length}"
+        )
+
+        self._file = None
+
+    def _ensure_open(self) -> None:
+        if self._file is None:
+            self._file = h5py.File(self.hdf5_path, "r")
+
+    def __len__(self) -> int:
+        return int((self._n_frames - self.window_length) // self.stride + 1)
+
+    def __getitem__(self, idx: int):
+        import numpy as np
+        from emg2qwerty.data import LabelData
+
+        self._ensure_open()
+        grp = self._file["emg2qwerty"]
+
+        offset = self.frame_start + idx * self.stride
+
+        if self.jitter:
+            leftover = (self.frame_end - self.window_length) - offset
+            if leftover > 0:
+                offset += int(np.random.randint(0, min(self.stride, leftover)))
+
+        latent = grp["latent"][offset : offset + self.window_length]
+        latent_tensor = torch.from_numpy(latent.astype("float32"))   # (T, 1024)
+
+        start_t = float(grp["time"][offset])
+        end_t   = float(grp["time"][offset + self.window_length - 1])
+
+        label_data = LabelData.from_keystrokes(self.keystrokes, start_t, end_t)
+        labels = torch.as_tensor(label_data.labels, dtype=torch.long)
+
+        return latent_tensor, labels
+
+    collate = staticmethod(WindowedEMGDataset.collate)
+
+
+def get_latent_dataloaders(
+    hdf5_path: Path,
+    window_length: int = 125,
+    stride: Optional[int] = None,
+    batch_size: int = 32,
+    num_workers: int = 0,
+) -> dict[str, DataLoader]:
+    """Build train / val / test DataLoaders for a single latent HDF5 file.
+
+    Splits the session temporally: 70 % train → 15 % val → 15 % test.
+
+    .. note::
+        This is a single-file split suitable for the current single HDF5 file.
+        When the full multi-file latent dataset is ready, update this function
+        to accept a list of paths and assign files to splits — the rest of
+        ``train_latent.py`` stays unchanged.
+
+    Args:
+        hdf5_path:     Path to the latent HDF5 file.
+        window_length: Latent frames per sample (default 125 ≈ 4 s at 32 ms/frame).
+        stride:        Stride between windows; defaults to ``window_length``.
+        batch_size:    Batch size for train and val. Test always uses batch_size=1.
+        num_workers:   DataLoader workers (0 = main process).
+
+    Returns:
+        Dict with keys ``'train'``, ``'val'``, ``'test'`` → DataLoader.
+    """
+    with h5py.File(hdf5_path, "r") as f:
+        total_frames = f["emg2qwerty"]["latent"].shape[0]
+
+    n_train = int(0.70 * total_frames)
+    n_val   = int(0.15 * total_frames)
+    n_test  = total_frames - n_train - n_val
+
+    train_dataset = LatentEMGDataset(
+        hdf5_path, window_length=window_length, stride=stride,
+        frame_start=0,               frame_end=n_train,               jitter=True,
+    )
+    val_dataset = LatentEMGDataset(
+        hdf5_path, window_length=window_length, stride=stride,
+        frame_start=n_train,         frame_end=n_train + n_val,       jitter=False,
+    )
+    test_dataset = LatentEMGDataset(
+        hdf5_path, window_length=window_length, stride=stride,
+        frame_start=n_train + n_val, frame_end=total_frames,          jitter=False,
+    )
+
+    print(
+        f"Latent split — total frames: {total_frames}"
+        f" | train: {n_train} ({len(train_dataset)} windows)"
+        f" | val: {n_val} ({len(val_dataset)} windows)"
+        f" | test: {n_test} ({len(test_dataset)} windows)"
+    )
+
+    persistent = num_workers > 0
+    return {
+        "train": DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+        "val": DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+        "test": DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
             pin_memory=True,
             persistent_workers=persistent,
         ),
