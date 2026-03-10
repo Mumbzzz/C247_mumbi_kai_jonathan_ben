@@ -519,3 +519,136 @@ Total train time: 01:53:07 (6787.6s)
   Test DER         : 1.56%
   Test SER         : 9.83%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_2144hrs
+Model           : rnn (latent)
+Pipeline        : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)
+HDF5            : D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+Device          : cuda
+Parameters      : 12,439,395
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:00:02 (2.7s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  hidden_size=512
+  num_layers=2
+  dropout=0.2
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 280.74%
+  Test CER         : 267.18%
+  Test IER         : 0.14%
+  Test DER         : 191.83%
+  Test SER         : 75.21%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_2144hrs
+Model           : conformer (latent)
+Pipeline        : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)
+HDF5            : D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+Device          : cuda
+Parameters      : 3,465,827
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:00:02 (2.4s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.2
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 526.68%
+  Test CER         : 516.90%
+  Test IER         : 0.28%
+  Test DER         : 445.77%
+  Test SER         : 70.85%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_2145hrs
+Model           : conformer (latent)
+Pipeline        : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)
+HDF5            : D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+Device          : cuda
+Parameters      : 3,465,827
+Epochs planned  : 10  |  Epochs completed: 10
+Total train time: 00:00:21 (21.6s)
+--- Hyperparameters ---
+  lr=0.0008453241881083158
+  weight_decay=0.02095814679480875
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.11692790270649321
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 89.73%
+  Test CER         : 90.70%
+  Test IER         : 49.72%
+  Test DER         : 0.56%
+  Test SER         : 40.42%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_2151hrs
+Model           : conformer (latent)
+Pipeline        : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)
+HDF5            : D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+Device          : cuda
+Parameters      : 3,465,827
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 00:05:40 (340.8s)
+--- Hyperparameters ---
+  lr=0.0008453241881083158
+  weight_decay=0.02095814679480875
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.11692790270649321
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 72.18%
+  Test CER         : 73.52%
+  Test IER         : 34.08%
+  Test DER         : 2.68%
+  Test SER         : 36.76%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260309_2306hrs
+Model           : conformer (latent)
+Pipeline        : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)
+HDF5            : D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+Device          : cuda
+Parameters      : 946,531
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 00:05:34 (334.6s)
+--- Hyperparameters ---
+  lr=0.0003201513136024105
+  weight_decay=0.015084515574125303
+  d_model=128
+  num_heads=16
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.16613218661220902
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 73.47%
+  Test CER         : 73.80%
+  Test IER         : 34.79%
+  Test DER         : 1.55%
+  Test SER         : 37.46%
+#################################################

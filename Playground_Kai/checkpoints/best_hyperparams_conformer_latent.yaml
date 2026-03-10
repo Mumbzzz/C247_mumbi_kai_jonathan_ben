@@ -1,0 +1,18 @@
+lr: 0.0003201513136024105
+weight_decay: 0.015084515574125303
+d_model: 128
+num_heads: 16
+num_layers: 2
+conv_kernel_size: 31
+dropout: 0.16613218661220902
+trial_val_cer: 85.7347
+hdf5_path: D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+window_length: 125
+search_mode: two-phase
+search_phase_found: C
+num_coarse_trials: 30
+num_fine_trials: 30
+coarse_epochs: 15
+fine_epochs: 15
+fine_shrink: 3.0
+tuned_at: '2026-03-09 23:00:41'

@@ -528,3 +528,137 @@ class ConformerEncoder(nn.Module):
 
         x = self.head(x)              # (T, N, num_classes)
         return F.log_softmax(x, dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# Latent-space encoders  (bypass SpectrogramNorm + MultiBandRotationInvariantMLP)
+# Input shape: (T, N, latent_dim) — pre-computed AE latent vectors
+# ---------------------------------------------------------------------------
+
+class LatentRNNEncoder(nn.Module):
+    """Bidirectional LSTM encoder that operates directly on latent EMG vectors.
+
+    Identical to :class:`RNNEncoder` except the ``SpectrogramNorm`` +
+    ``MultiBandRotationInvariantMLP`` front-end is replaced by a single linear
+    projection from ``latent_dim`` to ``rnn_in = 2 × mlp_features[-1]``.
+
+    Input shape:  ``(T, N, latent_dim)``
+    Output shape: ``(T, N, num_classes)``
+
+    Args:
+        latent_dim: Dimension of each input latent frame (default 1024).
+        mlp_features: Projection widths; the last entry sets the per-"band"
+            dimension fed into the RNN (same convention as :class:`RNNEncoder`).
+            With the default ``(384,)`` the RNN input is ``2 × 384 = 768``.
+        hidden_size: Hidden size per direction of the BiLSTM.
+        num_layers: Number of stacked BiLSTM layers.
+        dropout: Inter-layer dropout (disabled automatically when
+            ``num_layers == 1``).
+    """
+
+    def __init__(
+        self,
+        latent_dim: int = 1024,
+        mlp_features: Sequence[int] = (384,),
+        hidden_size: int = 512,
+        num_layers: int = 2,
+        dropout: float = 0.2,
+    ) -> None:
+        super().__init__()
+
+        rnn_in = 2 * list(mlp_features)[-1]  # e.g. 2 × 384 = 768
+
+        # Single linear projection replaces SpectrogramNorm + MultiBandMLP
+        self.input_proj = nn.Linear(latent_dim, rnn_in)
+
+        self.rnn = nn.LSTM(
+            input_size=rnn_in,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            bidirectional=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+            batch_first=False,
+        )
+
+        self.head = nn.Linear(2 * hidden_size, charset().num_classes)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """Args:
+            inputs: ``(T, N, latent_dim)`` float tensor of latent frames.
+        Returns:
+            ``(T, N, num_classes)`` log-softmax activations.
+        """
+        x = self.input_proj(inputs)  # (T, N, rnn_in)
+        x = x.contiguous()
+        x, _ = self.rnn(x)           # (T, N, 2 * hidden_size)
+        x = self.head(x)             # (T, N, num_classes)
+        return F.log_softmax(x, dim=-1)
+
+
+class LatentConformerEncoder(nn.Module):
+    """RPE-Conformer encoder that operates directly on latent EMG vectors.
+
+    Identical to :class:`ConformerEncoder` except the preprocessing front-end
+    (SpectrogramNorm + MultiBandRotationInvariantMLP) is replaced by a single
+    linear projection from ``latent_dim`` to ``d_model``.
+
+    Input shape:  ``(T, N, latent_dim)``
+    Output shape: ``(T, N, num_classes)``
+
+    Args:
+        latent_dim: Dimension of each input latent frame (default 1024).
+        d_model: Feature dimension throughout all Conformer blocks.
+        num_heads: Number of attention heads.  Must evenly divide ``d_model``.
+        num_layers: Number of stacked Conformer blocks.
+        conv_kernel_size: Depthwise conv kernel size (must be odd).
+        dropout: Dropout probability used across all sub-modules.
+    """
+
+    def __init__(
+        self,
+        latent_dim: int = 1024,
+        d_model: int = 256,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        conv_kernel_size: int = 31,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        assert d_model % num_heads == 0, (
+            f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
+        )
+
+        # Single linear projection replaces SpectrogramNorm + MultiBandMLP + old input_proj
+        self.input_proj = nn.Linear(latent_dim, d_model)
+
+        self.layers = nn.ModuleList([
+            RPEConformerBlock(
+                d_model=d_model,
+                num_heads=num_heads,
+                ffn_dim=4 * d_model,
+                conv_kernel_size=conv_kernel_size,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.head = nn.Linear(d_model, charset().num_classes)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """Args:
+            inputs: ``(T, N, latent_dim)`` float tensor of latent frames.
+        Returns:
+            ``(T, N, num_classes)`` log-softmax activations.
+        """
+        x = self.input_proj(inputs)   # (T, N, d_model)
+        T, N = x.shape[0], x.shape[1]
+
+        rel_pe = _rel_sinusoidal_pe(T, x.shape[2], x.device)  # (2T-1, d_model)
+
+        x = x.transpose(0, 1)         # (T, N, d_model) → (N, T, d_model)
+        for layer in self.layers:
+            x = layer(x, rel_pe)       # (N, T, d_model)
+        x = x.transpose(0, 1)         # (N, T, d_model) → (T, N, d_model)
+
+        x = self.head(x)              # (T, N, num_classes)
+        return F.log_softmax(x, dim=-1)
