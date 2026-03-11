@@ -19,6 +19,7 @@ Key flags:
     --hdf5-path      Path to latent HDF5 file            (default: data/preprocessed/emg_latent_ae_v2.hdf5)
     --resume         Path to a checkpoint .pt to continue training
     --from-hyperparams  YAML file of hyperparameters (from hyperparam_tuner_latent.py)
+    --early-stopping-patience  Stop if val CER doesn't improve for N epochs (0 = disabled)
 
 CNN+LSTM architecture flags:
     --proj-features  Linear projection output size       (default: 384)
@@ -227,7 +228,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=_hp.get("lr", 5e-4))
     p.add_argument("--weight-decay", type=float, default=_hp.get("weight_decay", 1e-2))
     p.add_argument("--min-lr", type=float, default=1e-5)
-    p.add_argument("--warmup-epochs", type=int, default=5)
+    p.add_argument("--warmup-epochs", type=int, default=10)
     # Resume / test-only / hyperparams
     p.add_argument("--resume", type=Path, default=None,
                    help="Checkpoint .pt file to resume training from")
@@ -235,6 +236,8 @@ def parse_args() -> argparse.Namespace:
                    help="Skip training: load best checkpoint and run test evaluation only")
     p.add_argument("--from-hyperparams", type=Path, default=None,
                    help="YAML file of hyperparameters (from hyperparam_tuner_latent.py)")
+    p.add_argument("--early-stopping-patience", type=int, default=0,
+                   help="Stop training if val CER does not improve for this many epochs. 0 = disabled.")
     p.add_argument("--notes", type=str, default="",
                    help="Free-text annotation written to the CSV log")
     return p.parse_args()
@@ -379,6 +382,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     start_epoch = 0
     best_cer = float("inf")
+    patience_counter = 0
 
     if args.resume is not None:
         ckpt = torch.load(args.resume, map_location=device, weights_only=False)
@@ -394,6 +398,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     total_epochs = args.epochs - start_epoch
     print(f"\nTraining for {total_epochs} epochs …")
+    if args.early_stopping_patience > 0:
+        print(f"Early stopping : patience={args.early_stopping_patience} epochs")
     print("Tip: press Ctrl+C at any time to stop early and jump to test evaluation.\n")
 
     epoch_duration: float = 0.0
@@ -445,6 +451,7 @@ def main() -> None:
 
         if val_cer < best_cer:
             best_cer = val_cer
+            patience_counter = 0
             ckpt_path = args.checkpoint_dir / f"{ckpt_stem}.pt"
             safe_args = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
             torch.save(
@@ -459,6 +466,11 @@ def main() -> None:
                 ckpt_path,
             )
             print(f"  -> Saved best checkpoint  (val CER={best_cer:.2f}%)")
+        else:
+            patience_counter += 1
+            if args.early_stopping_patience > 0 and patience_counter >= args.early_stopping_patience:
+                print(f"\n[Early stopping] No improvement for {patience_counter} epochs. Stopping.")
+                break
 
     # ------------------------------------------------------------------
     # Test evaluation using the best checkpoint
@@ -511,7 +523,9 @@ def main() -> None:
         log_f.write(f"HDF5            : {args.hdf5_path}\n")
         log_f.write(f"Device          : {device}\n")
         log_f.write(f"Parameters      : {sum(p.numel() for p in model.parameters()):,}\n")
-        log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}\n")
+        _stopped_early = args.early_stopping_patience > 0 and epochs_completed < (args.epochs - start_epoch)
+        log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}"
+                    + ("  [early stopped]\n" if _stopped_early else "\n"))
         log_f.write(f"Total train time: {total_time_str} ({total_training_time:.1f}s)\n")
         log_f.write("--- Hyperparameters ---\n")
         log_f.write(f"  lr={args.lr}\n")
