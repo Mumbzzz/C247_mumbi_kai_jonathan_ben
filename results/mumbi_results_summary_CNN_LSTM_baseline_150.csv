@@ -1,2 +1,0 @@
-run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
-CNN_LSTM_32ch_2000hz_100pct,2026-03-08 23:12:29,CNN_LSTM,150,32,2000,1.0,spectrogram,0.11865706996371349,0.6484906673431396,16.038989809481613,18.947596362061496,6675.740059903323,arch_comparison
