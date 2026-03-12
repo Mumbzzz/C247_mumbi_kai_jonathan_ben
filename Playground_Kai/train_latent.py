@@ -1,7 +1,7 @@
 """Training and evaluation script for latent-space EMG-to-keystroke models.
 
-Operates on pre-computed AE latent vectors stored in ``emg_latent_ae_v2.hdf5``
-(shape: N_frames × 1024 float32, at 32 ms / frame).
+Operates on pre-computed AE latent vectors stored in ``data_latent/*_latent.hdf5``
+(shape: N_frames × 256 float32).
 
 The front-end SpectrogramNorm + MultiBandRotationInvariantMLP from the raw
 EMG pipeline is removed; instead a single ``nn.Linear(1024, d_model)`` projects
@@ -16,7 +16,8 @@ Key flags:
     --epochs         Number of training epochs  (default: 80)
     --batch-size     Batch size                 (default: 32)
     --window-length  Latent frames per window   (default: 125, ≈ 4 s @ 32 ms)
-    --hdf5-path      Path to latent HDF5 file   (default: data/emg_latent_ae_v2.hdf5)
+    --data-root      Directory with *_latent.hdf5 files (default: data_latent/)
+    --config         Train/val/test split YAML  (default: config/user/single_user.yaml)
     --resume         Path to a checkpoint .pt to continue training
     --from-hyperparams  YAML file of hyperparameters
 
@@ -50,8 +51,8 @@ from Playground_Kai.data_utils import get_latent_dataloaders
 from Playground_Kai.model import LatentRNNEncoder, LatentConformerEncoder
 from scripts.logger import log_epoch, log_summary, make_run_id
 
-# Fixed latent dimension — defined by the autoencoder
-LATENT_DIM: int = 1024
+# Fixed latent dimension — defined by the autoencoder (256 for current _latent.hdf5 files)
+LATENT_DIM: int = 256
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +187,12 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # Data
-    p.add_argument("--hdf5-path", type=Path,
-                   default=_ROOT / "data" / "emg_latent_ae_v2.hdf5",
-                   help="Path to the latent EMG HDF5 file")
+    p.add_argument("--data-root", type=Path,
+                   default=_ROOT / "data_latent",
+                   help="Directory containing *_latent.hdf5 latent session files")
+    p.add_argument("--config", type=Path,
+                   default=_ROOT / "config" / "user" / "single_user.yaml",
+                   help="Path to the train/val/test split YAML")
     p.add_argument("--checkpoint-dir", type=Path,
                    default=Path(__file__).resolve().parent / "checkpoints",
                    help="Directory to write model checkpoints")
@@ -244,8 +248,8 @@ def main() -> None:
 
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    _pipeline_label = "latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)"
-    _sampling_rate  = 31.25   # Hz equivalent (1 frame per 32 ms)
+    _pipeline_label = "latent (data_latent/, 256-dim, single_user.yaml split)"
+    _sampling_rate  = 62.5    # Hz equivalent (approx, based on new _latent.hdf5 files)
     _input_type     = "latent"
     _num_channels   = 32      # 2 wrists × 16 channels (informational only)
     ckpt_stem       = f"best_latent_{args.model}"
@@ -257,7 +261,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     print("Building data loaders …")
     loaders = get_latent_dataloaders(
-        hdf5_path=args.hdf5_path,
+        data_root=args.data_root,
+        config_path=args.config,
         window_length=args.window_length,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -506,7 +511,8 @@ def main() -> None:
         log_f.write(f"Run timestamp   : {run_timestamp}\n")
         log_f.write(f"Model           : {args.model} (latent)\n")
         log_f.write(f"Pipeline        : {_pipeline_label}\n")
-        log_f.write(f"HDF5            : {args.hdf5_path}\n")
+        log_f.write(f"Data root       : {args.data_root}\n")
+        log_f.write(f"Config          : {args.config}\n")
         log_f.write(f"Device          : {device}\n")
         log_f.write(f"Parameters      : {sum(p.numel() for p in model.parameters()):,}\n")
         log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}\n")
