@@ -479,6 +479,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
             model_slug = model_name.lower().replace("_", "")  # "cnn" or "cnnlstm"
             if getattr(args, "biophys", False) and model_slug == "cnnlstm":
                 model_slug = "cnnlstm_biophys"
+            elif getattr(args, "recons_v3", False) and model_slug == "cnnlstm":
+                model_slug = "cnnlstm_recons_v3"
             if train_fraction < 1.0:
                 ckpt_dir = args.checkpoint_dir / "training_fraction_ablation"
                 ckpt_path = ckpt_dir / f"best_{model_slug}_{fraction_pct}pct.pt"
