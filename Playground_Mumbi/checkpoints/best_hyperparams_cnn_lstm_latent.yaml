@@ -1,0 +1,22 @@
+lr: 0.006514405018113633
+weight_decay: 0.004387743482275662
+proj_features: 256
+cnn_channels: 384
+cnn_kernel: 5
+cnn_layers: 2
+lstm_hidden: 384
+lstm_layers: 1
+dropout: 0.23297117755558505
+trial_val_cer: 94.8907
+data_dir: /content/C247_mumbikaijonathanben/data/89335547_latent_v2
+latent_config: /content/C247_mumbikaijonathanben/config/user/single_user.yaml
+num_trial_sessions: 8
+window_length: 125
+search_mode: two-phase
+search_phase_found: F1
+num_coarse_trials: 20
+num_fine_trials: 30
+coarse_epochs: 60
+fine_epochs: 80
+fine_shrink: 3.0
+tuned_at: '2026-03-12 13:00:24'
