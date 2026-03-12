@@ -61,7 +61,12 @@ from emg2qwerty.modules import (
     TDSConvEncoder,
 )
 
-from Playground_Mumbi.data_utils import get_dataloaders
+from Playground_Kai.data_preprocess import (
+    IN_FEATURES as PREP_IN_FEATURES,
+    N_ELECTRODE_CHANNELS as PREP_N_CHANNELS,
+)
+
+from Playground_Mumbi.data_utils import get_dataloaders, get_dataloaders_biophys
 from Playground_Mumbi.model import CNNLSTMModel
 from scripts.logger import log_epoch, log_summary, make_run_id
 
@@ -143,12 +148,17 @@ def build_cnn_lstm_model(args: argparse.Namespace) -> nn.Module:
     Returns:
         A :class:`CNNLSTMModel` instance.
     """
-    in_features = args.num_channels * _FREQ_BINS
+    if getattr(args, "biophys", False):
+        in_features = PREP_IN_FEATURES        # 256 = 8 channels × 32 Mel bins
+        electrode_channels = PREP_N_CHANNELS  # 8
+    else:
+        in_features = args.num_channels * _FREQ_BINS
+        electrode_channels = args.num_channels
     return CNNLSTMModel(
         in_features=in_features,
         mlp_features=_MLP_FEATURES,
         num_bands=_NUM_BANDS,
-        electrode_channels=args.num_channels,
+        electrode_channels=electrode_channels,
         cnn_channels=args.cnn_channels,
         cnn_kernel=args.cnn_kernel,
         cnn_layers=args.cnn_layers,
@@ -313,16 +323,27 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
     # Data
     # ------------------------------------------------------------------
     print("Building data loaders …")
-    loaders = get_dataloaders(
-        data_root=args.data_root,
-        config_path=args.config,
-        window_length=args.window_length,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        test_window_length=args.window_length,
-        train_fraction=train_fraction,
-        channel_indices=args.channel_indices,
-    )
+    if getattr(args, "biophys", False):
+        loaders = get_dataloaders_biophys(
+            data_root=args.data_root,
+            config_path=args.config,
+            window_length=args.window_length,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            test_window_length=args.window_length,
+            train_fraction=train_fraction,
+        )
+    else:
+        loaders = get_dataloaders(
+            data_root=args.data_root,
+            config_path=args.config,
+            window_length=args.window_length,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            test_window_length=args.window_length,
+            train_fraction=train_fraction,
+            channel_indices=args.channel_indices,
+        )
     print(
         f"  train batches : {len(loaders['train'])}"
         f" | val batches : {len(loaders['val'])}"
@@ -341,10 +362,12 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
     # ------------------------------------------------------------------
     # Logger run ID
     # ------------------------------------------------------------------
+    _eff_channels = PREP_N_CHANNELS if getattr(args, "biophys", False) else args.num_channels
+    _eff_hz = 1000 if getattr(args, "biophys", False) else 2000
     run_id = make_run_id(
         model=model_name,
-        num_channels=args.num_channels,
-        sampling_rate_hz=2000,
+        num_channels=_eff_channels,
+        sampling_rate_hz=_eff_hz,
         train_fraction=train_fraction,
     )
     print(f"Run ID      : {run_id}")
@@ -447,6 +470,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
             best_cer = val_cer
             fraction_pct = int(round(train_fraction * 100))
             model_slug = model_name.lower().replace("_", "")  # "cnn" or "cnnlstm"
+            if getattr(args, "biophys", False) and model_slug == "cnnlstm":
+                model_slug = "cnnlstm_biophys"
             if train_fraction < 1.0:
                 ckpt_dir = args.checkpoint_dir / "training_fraction_ablation"
                 ckpt_path = ckpt_dir / f"best_{model_slug}_{fraction_pct}pct.pt"
@@ -480,6 +505,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
     print("\n--- Test Evaluation ---")
     fraction_pct = int(round(train_fraction * 100))
     model_slug = model_name.lower().replace("_", "")
+    if getattr(args, "biophys", False) and model_slug == "cnnlstm":
+        model_slug = "cnnlstm_biophys"
     if train_fraction < 1.0:
         best_ckpt = args.checkpoint_dir / "training_fraction_ablation" / f"best_{model_slug}_{fraction_pct}pct.pt"
     elif args.num_channels < 16:
@@ -504,10 +531,10 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
         run_id=run_id,
         model=model_name,
         epochs=epochs_completed,
-        num_channels=args.num_channels,
-        sampling_rate_hz=2000,
+        num_channels=_eff_channels,
+        sampling_rate_hz=_eff_hz,
         train_fraction=train_fraction,
-        input_type="spectrogram",
+        input_type="biophys" if getattr(args, "biophys", False) else "spectrogram",
         final_train_loss=train_loss,
         final_val_loss=val_loss,
         final_val_cer=val_cer,
@@ -531,6 +558,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", type=str, default="cnn",
                    choices=["cnn", "cnn_lstm"],
                    help="Which model to train (default: cnn)")
+    p.add_argument("--biophys", action="store_true",
+                   help="Use biophysics preprocessing pipeline (notch+bandpass+decimate+Mel). "
+                        "Only applies to --model cnn_lstm.")
     # Paths
     p.add_argument("--data-root", type=Path, default=_ROOT / "data",
                    help="Directory containing *.hdf5 session files")
@@ -650,7 +680,8 @@ def main() -> None:
     if args.model == "cnn_lstm":
         # CNN+LSTM: single full training run (no fraction sweep)
         notes = args.notes or (
-            "arch_comparison" if args.train_fraction == 1.0 else "ablation_train_fraction"
+            ("arch_comparison_biophys" if args.biophys else "arch_comparison")
+            if args.train_fraction == 1.0 else "ablation_train_fraction"
         )
         run_training(
             args,

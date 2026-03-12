@@ -298,6 +298,96 @@ def get_dataloaders(
     }
 
 
+def get_dataloaders_biophys(
+    data_root: Path,
+    config_path: Path,
+    window_length: int = 8000,
+    stride: Optional[int] = None,
+    padding: tuple[int, int] = (1800, 200),
+    batch_size: int = 32,
+    num_workers: int = 0,
+    test_window_length: Optional[int] = None,
+    train_fraction: float = 1.0,
+) -> dict[str, DataLoader]:
+    """Like get_dataloaders but uses the biophysics preprocessing pipeline.
+
+    Swaps in Kai's ``build_preprocess_transform`` (notch + bandpass + decimation
+    + Mel spectrogram) in place of the standard LogSpectrogram chain.
+    Channel selection (8 per band) and all augmentations are handled internally
+    by the transform — no ``channel_indices`` parameter is needed.
+    """
+    from Playground_Kai.data_preprocess import build_preprocess_transform
+
+    assert 0.0 < train_fraction <= 1.0
+
+    session_paths = get_session_paths(data_root=data_root, config_path=config_path)
+    train_transform = build_preprocess_transform(augment=True)
+    eval_transform  = build_preprocess_transform(augment=False)
+
+    train_dataset = ConcatDataset([
+        WindowedEMGDataset(
+            hdf5_path=p,
+            window_length=window_length,
+            stride=stride,
+            padding=padding,
+            jitter=True,
+            transform=train_transform,
+        )
+        for p in session_paths["train"]
+    ])
+
+    n_total = len(train_dataset)
+    if train_fraction < 1.0:
+        n_subset = max(1, int(train_fraction * n_total))
+        print(f"  train_fraction={train_fraction:.2f}: using {n_subset} / {n_total} training windows")
+        train_dataset = Subset(train_dataset, list(range(n_subset)))
+    else:
+        print(f"  train_fraction=1.00: using all {n_total} training windows")
+
+    val_dataset = ConcatDataset([
+        WindowedEMGDataset(
+            hdf5_path=p,
+            window_length=window_length,
+            stride=None,
+            padding=padding,
+            jitter=False,
+            transform=eval_transform,
+        )
+        for p in session_paths["val"]
+    ])
+
+    test_dataset = ConcatDataset([
+        WindowedEMGDataset(
+            hdf5_path=p,
+            window_length=test_window_length,
+            stride=None,
+            padding=(0, 0) if test_window_length is None else padding,
+            jitter=False,
+            transform=eval_transform,
+        )
+        for p in session_paths["test"]
+    ])
+
+    persistent = num_workers > 0
+    return {
+        "train": DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers, collate_fn=WindowedEMGDataset.collate,
+            pin_memory=True, persistent_workers=persistent,
+        ),
+        "val": DataLoader(
+            val_dataset, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, collate_fn=WindowedEMGDataset.collate,
+            pin_memory=True, persistent_workers=persistent,
+        ),
+        "test": DataLoader(
+            test_dataset, batch_size=1, shuffle=False,
+            num_workers=num_workers, collate_fn=WindowedEMGDataset.collate,
+            pin_memory=True, persistent_workers=persistent,
+        ),
+    }
+
+
 def build_loaders_from_paths(
     train_paths: list[Path],
     val_paths: list[Path],
