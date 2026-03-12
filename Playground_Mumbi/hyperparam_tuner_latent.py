@@ -179,8 +179,8 @@ def run_trial(
             num_workers=0,
         )
 
-    train_sessions = [e["session"] for e in split_cfg["train"]][:trial_sessions]
-    val_sessions   = [e["session"] for e in split_cfg["val"]]
+    train_sessions = [e["session"] for e in split_cfg["dataset"]["train"]][:trial_sessions]
+    val_sessions   = [e["session"] for e in split_cfg["dataset"]["val"]]
 
     loaders = {
         "train": _build_loader(train_sessions),
