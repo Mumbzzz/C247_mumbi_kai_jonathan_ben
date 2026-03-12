@@ -612,7 +612,7 @@ def get_latent_dataloaders(
     def _resolve_paths(split: str) -> list[Path]:
         paths = []
         for entry in cfg["dataset"].get(split, []):
-            p = data_dir / f"{entry['session']}_recons_v3.hdf5"  # same session names as raw, latent suffix appended
+            p = data_dir / f"{entry['session']}_latent_v2.hdf5"  # same session names as raw, latent suffix appended
             if not p.exists():
                 raise FileNotFoundError(f"Latent HDF5 not found: {p}")
             paths.append(p)
@@ -679,4 +679,166 @@ def get_latent_dataloaders(
             pin_memory=True,
             persistent_workers=persistent,
         ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Reconstructed EMG v3 dataset + DataLoader factory
+# ---------------------------------------------------------------------------
+
+class ReconstructedEMGDataset(torch.utils.data.Dataset):
+    """Windowed dataset over AE-reconstructed EMG (_recons_v3.hdf5) files.
+
+    Preloads all sessions into RAM at init for fast random access.
+    Each item is a ``(window_length, 32)`` float32 tensor (left+right stacked)
+    plus a label tensor, compatible with ``WindowedEMGDataset.collate``.
+
+    Args:
+        paths:         List of HDF5 file paths to load.
+        window_length: Frames per window (default 250 ≈ 4 s at 62.5 Hz).
+        stride:        Frame stride between consecutive windows.
+        jitter:        If True, randomly shift window offset by up to one stride.
+    """
+
+    def __init__(
+        self,
+        paths: list[Path],
+        window_length: int = 250,
+        stride: int = 250,
+        jitter: bool = False,
+    ) -> None:
+        import numpy as np
+        from emg2qwerty.data import LabelData as _LabelData
+
+        self.window_length = window_length
+        self.stride        = stride
+        self.jitter        = jitter
+
+        self._sessions: list[tuple[torch.Tensor, list, list]] = []
+        self._windows:  list[tuple[int, int]] = []  # (session_idx, frame_offset)
+
+        for p in paths:
+            with h5py.File(p, "r") as f:
+                ts    = f["emg2qwerty"]["timeseries"]
+                left  = ts["emg_left"][:].astype("float32")   # (T, 16)
+                right = ts["emg_right"][:].astype("float32")  # (T, 16)
+                times = ts["time"][:].tolist()
+                ks    = json.loads(f["emg2qwerty"].attrs.get("keystrokes", "[]"))
+
+            data = torch.from_numpy(np.concatenate([left, right], axis=1))  # (T, 32)
+            sess_idx = len(self._sessions)
+            self._sessions.append((data, times, ks))
+
+            n_frames = data.shape[0]
+            for offset in range(0, n_frames - window_length + 1, stride):
+                self._windows.append((sess_idx, offset))
+
+    def __len__(self) -> int:
+        return len(self._windows)
+
+    def __getitem__(self, idx: int):
+        from emg2qwerty.data import LabelData
+
+        sess_idx, offset = self._windows[idx]
+        data, times, ks = self._sessions[sess_idx]
+
+        if self.jitter:
+            max_jitter = min(self.stride, data.shape[0] - self.window_length - offset)
+            if max_jitter > 0:
+                offset += int(torch.randint(0, max_jitter, (1,)).item())
+
+        window  = data[offset : offset + self.window_length]   # (T, 32)
+        start_t = times[offset]
+        end_t   = times[offset + self.window_length - 1]
+
+        label_data = LabelData.from_keystrokes(ks, start_t, end_t)
+        labels = torch.as_tensor(label_data.labels, dtype=torch.long)
+        return window, labels
+
+    collate = staticmethod(WindowedEMGDataset.collate)
+
+
+def get_recons_dataloaders(
+    data_dir: Path,
+    config_path: Path,
+    window_length: int = 250,
+    stride: Optional[int] = None,
+    batch_size: int = 32,
+    num_workers: int = 0,
+    train_fraction: float = 1.0,
+) -> dict[str, DataLoader]:
+    """Build train / val / test DataLoaders for reconstructed EMG v3 files.
+
+    Mirrors ``get_latent_dataloaders`` but reads ``_recons_v3.hdf5`` files and
+    uses :class:`ReconstructedEMGDataset` (preloads sessions into RAM).
+
+    Args:
+        data_dir:      Directory containing ``*_recons_v3.hdf5`` session files.
+        config_path:   Path to split YAML (same format as raw ``single_user.yaml``).
+        window_length: Frames per window (default 250 ≈ 4 s at 62.5 Hz).
+        stride:        Stride between windows; defaults to ``window_length``.
+        batch_size:    Batch size for train/val. Test always uses 1.
+        num_workers:   DataLoader worker processes.
+        train_fraction: Fraction of training windows to use (0.0, 1.0].
+
+    Returns:
+        Dict with keys ``'train'``, ``'val'``, ``'test'`` → DataLoader.
+    """
+    assert 0.0 < train_fraction <= 1.0
+    _stride = stride if stride is not None else window_length
+
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+
+    def _resolve_paths(split: str) -> list[Path]:
+        paths = []
+        for entry in cfg["dataset"].get(split, []):
+            p = data_dir / f"{entry['session']}_recons_v3.hdf5"
+            if not p.exists():
+                raise FileNotFoundError(f"Recons HDF5 not found: {p}")
+            paths.append(p)
+        return paths
+
+    train_paths = _resolve_paths("train")
+    val_paths   = _resolve_paths("val")
+    test_paths  = _resolve_paths("test")
+
+    print("Preloading reconstructed EMG into RAM...", flush=True)
+    train_dataset: torch.utils.data.Dataset = ReconstructedEMGDataset(
+        train_paths, window_length=window_length, stride=_stride, jitter=True
+    )
+    val_dataset   = ReconstructedEMGDataset(
+        val_paths,   window_length=window_length, stride=_stride, jitter=False
+    )
+    test_dataset  = ReconstructedEMGDataset(
+        test_paths,  window_length=window_length, stride=_stride, jitter=False
+    )
+    print("Done.", flush=True)
+
+    n_total = len(train_dataset)
+    if train_fraction < 1.0:
+        n_subset = max(1, int(train_fraction * n_total))
+        print(f"  train_fraction={train_fraction:.2f}: using {n_subset} / {n_total} training windows")
+        train_dataset = Subset(train_dataset, list(range(n_subset)))
+    else:
+        print(f"  train_fraction=1.00: using all {n_total} training windows")
+
+    print(
+        f"Recons split — train sessions: {len(train_paths)}"
+        f" | val sessions: {len(val_paths)}"
+        f" | test sessions: {len(test_paths)}"
+    )
+
+    persistent = num_workers > 0
+    collate = ReconstructedEMGDataset.collate
+    return {
+        "train": DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                            num_workers=num_workers, collate_fn=collate,
+                            pin_memory=True, persistent_workers=persistent),
+        "val":   DataLoader(val_dataset,   batch_size=batch_size, shuffle=False,
+                            num_workers=num_workers, collate_fn=collate,
+                            pin_memory=True, persistent_workers=persistent),
+        "test":  DataLoader(test_dataset,  batch_size=1,          shuffle=False,
+                            num_workers=num_workers, collate_fn=collate,
+                            pin_memory=True, persistent_workers=persistent),
     }
