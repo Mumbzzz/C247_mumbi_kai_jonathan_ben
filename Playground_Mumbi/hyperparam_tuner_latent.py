@@ -164,7 +164,7 @@ def run_trial(
     with open(config_path) as _f:
         split_cfg = _yaml.safe_load(_f)
 
-    def _build_loader(sessions: list[str]) -> DataLoader:
+    def _build_loader(sessions: list[str], shuffle: bool) -> DataLoader:
         datasets = [
             LatentEMGDataset(
                 data_dir / f"{s}_latent_v2.hdf5",
@@ -175,24 +175,17 @@ def run_trial(
         return DataLoader(
             ConcatDataset(datasets),
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=shuffle,
             num_workers=0,
+            collate_fn=LatentEMGDataset.collate,
         )
 
     train_sessions = [e["session"] for e in split_cfg["dataset"]["train"]][:trial_sessions]
     val_sessions   = [e["session"] for e in split_cfg["dataset"]["val"]]
 
     loaders = {
-        "train": _build_loader(train_sessions),
-        "val":   DataLoader(
-            ConcatDataset([
-                LatentEMGDataset(data_dir / f"{s}_latent_v2.hdf5", window_length=window_length)
-                for s in val_sessions
-            ]),
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=0,
-        ),
+        "train": _build_loader(train_sessions, shuffle=True),
+        "val":   _build_loader(val_sessions,   shuffle=False),
     }
 
     effective_dropout = config["dropout"] if config["lstm_layers"] > 1 else 0.0
