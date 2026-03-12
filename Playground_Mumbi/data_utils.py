@@ -129,12 +129,18 @@ def _build_eval_transform(
 def get_session_paths(
     data_root: Path,
     config_path: Path,
+    data_subdir: str = "89335547",
+    file_suffix: str = "",
 ) -> dict[str, list[Path]]:
     """Parse single_user.yaml and return the HDF5 paths for each data split.
 
     Args:
-        data_root: Directory containing the ``*.hdf5`` session files.
+        data_root:   Directory containing the user data subdirectory.
         config_path: Path to ``config/user/single_user.yaml``.
+        data_subdir: Subdirectory under data_root containing session files
+                     (default: ``"89335547"``).
+        file_suffix: Extra suffix appended to session name before ``.hdf5``
+                     (e.g. ``"_recons_v3"`` → ``{session}_recons_v3.hdf5``).
 
     Returns:
         Dict with keys ``'train'``, ``'val'``, ``'test'`` mapping to lists of
@@ -152,7 +158,7 @@ def get_session_paths(
         paths: list[Path] = []
         for entry in entries:
             session = entry["session"]
-            hdf5_path = data_root / "89335547" / f"{session}.hdf5"
+            hdf5_path = data_root / data_subdir / f"{session}{file_suffix}.hdf5"
             if not hdf5_path.exists():
                 raise FileNotFoundError(f"HDF5 file not found: {hdf5_path}")
             paths.append(hdf5_path)
@@ -175,6 +181,8 @@ def get_dataloaders(
     test_window_length: Optional[int] = None,
     train_fraction: float = 1.0,
     channel_indices: list[int] | None = None,
+    data_subdir: str = "89335547",
+    file_suffix: str = "",
 ) -> dict[str, DataLoader]:
     """Build train/val/test DataLoaders from the single_user split config.
 
@@ -213,7 +221,8 @@ def get_dataloaders(
         f"train_fraction must be in (0.0, 1.0], got {train_fraction}"
     )
 
-    session_paths = get_session_paths(data_root=data_root, config_path=config_path)
+    session_paths = get_session_paths(data_root=data_root, config_path=config_path,
+                                       data_subdir=data_subdir, file_suffix=file_suffix)
     train_transform = _build_train_transform(channel_indices=channel_indices)
     eval_transform = _build_eval_transform(channel_indices=channel_indices)
 
@@ -308,6 +317,8 @@ def get_dataloaders_biophys(
     num_workers: int = 0,
     test_window_length: Optional[int] = None,
     train_fraction: float = 1.0,
+    data_subdir: str = "89335547",
+    file_suffix: str = "",
 ) -> dict[str, DataLoader]:
     """Like get_dataloaders but uses the biophysics preprocessing pipeline.
 
@@ -320,7 +331,8 @@ def get_dataloaders_biophys(
 
     assert 0.0 < train_fraction <= 1.0
 
-    session_paths = get_session_paths(data_root=data_root, config_path=config_path)
+    session_paths = get_session_paths(data_root=data_root, config_path=config_path,
+                                       data_subdir=data_subdir, file_suffix=file_suffix)
     train_transform = build_preprocess_transform(augment=True)
     eval_transform  = build_preprocess_transform(augment=False)
 
