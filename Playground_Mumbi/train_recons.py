@@ -204,7 +204,7 @@ def main() -> None:
     print(f"Pipeline    : recons_v3 (32-dim @ 62.5 Hz)")
 
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_stem = "best_recons_cnn_lstm"
+    ckpt_stem = "best_cnnlstm_recons_v3"
 
     # Data
     print("Building data loaders …")
