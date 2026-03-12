@@ -62,7 +62,7 @@ from Playground_Mumbi.model_latent import LatentCNNLSTMModel
 from scripts.logger import log_epoch, log_summary, make_run_id
 
 # Fixed latent dimension — defined by the autoencoder
-LATENT_DIM: int = 1024
+LATENT_DIM: int = 256
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def parse_args() -> argparse.Namespace:
     )
     # Data
     p.add_argument("--data-dir", type=Path,
-                   default=_ROOT / "data" / "89335547_latent",
+                   default=_ROOT / "data" / "89335547_latent_v2",
                    help="Directory containing latent HDF5 session files")
     p.add_argument("--latent-config", type=Path,
                    default=_ROOT / "config" / "user" / "single_user.yaml",
