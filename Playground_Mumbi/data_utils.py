@@ -600,7 +600,7 @@ def get_latent_dataloaders(
     def _resolve_paths(split: str) -> list[Path]:
         paths = []
         for entry in cfg["dataset"].get(split, []):
-            p = data_dir / f"{entry['session']}_latent_v2.hdf5"  # same session names as raw, latent suffix appended
+            p = data_dir / f"{entry['session']}_recons_v3.hdf5"  # same session names as raw, latent suffix appended
             if not p.exists():
                 raise FileNotFoundError(f"Latent HDF5 not found: {p}")
             paths.append(p)

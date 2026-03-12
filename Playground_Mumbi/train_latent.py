@@ -198,7 +198,7 @@ def parse_args() -> argparse.Namespace:
     )
     # Data
     p.add_argument("--data-dir", type=Path,
-                   default=_ROOT / "data" / "89335547_latent_v2",
+                   default=_ROOT / "data" / "89335547_recons_v3",
                    help="Directory containing latent HDF5 session files")
     p.add_argument("--latent-config", type=Path,
                    default=_ROOT / "config" / "user" / "single_user.yaml",

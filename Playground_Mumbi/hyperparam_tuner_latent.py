@@ -167,7 +167,7 @@ def run_trial(
     def _build_loader(sessions: list[str], shuffle: bool) -> DataLoader:
         datasets = [
             LatentEMGDataset(
-                data_dir / f"{s}_latent_v2.hdf5",
+                data_dir / f"{s}_recons_v3.hdf5",
                 window_length=window_length,
             )
             for s in sessions
@@ -390,7 +390,7 @@ def parse_args() -> argparse.Namespace:
     )
     # --- Data ---
     p.add_argument("--data-dir", type=Path,
-                   default=_ROOT / "data" / "89335547_latent_v2",
+                   default=_ROOT / "data" / "89335547_recons_v3",
                    help="Directory containing latent HDF5 session files")
     p.add_argument("--latent-config", type=Path,
                    default=_ROOT / "config" / "user" / "single_user.yaml",
