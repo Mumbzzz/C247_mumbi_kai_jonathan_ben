@@ -323,6 +323,9 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
     # Data
     # ------------------------------------------------------------------
     print("Building data loaders …")
+    _recons_v3 = getattr(args, "recons_v3", False)
+    _data_subdir = "89335547_recons_v3" if _recons_v3 else "89335547"
+    _file_suffix = "_recons_v3" if _recons_v3 else ""
     if getattr(args, "biophys", False):
         loaders = get_dataloaders_biophys(
             data_root=args.data_root,
@@ -332,6 +335,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
             num_workers=args.num_workers,
             test_window_length=args.window_length,
             train_fraction=train_fraction,
+            data_subdir=_data_subdir,
+            file_suffix=_file_suffix,
         )
     else:
         loaders = get_dataloaders(
@@ -343,6 +348,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
             test_window_length=args.window_length,
             train_fraction=train_fraction,
             channel_indices=args.channel_indices,
+            data_subdir=_data_subdir,
+            file_suffix=_file_suffix,
         )
     print(
         f"  train batches : {len(loaders['train'])}"
@@ -472,6 +479,8 @@ def run_training(args: argparse.Namespace, train_fraction: float, notes: str,
             model_slug = model_name.lower().replace("_", "")  # "cnn" or "cnnlstm"
             if getattr(args, "biophys", False) and model_slug == "cnnlstm":
                 model_slug = "cnnlstm_biophys"
+            elif getattr(args, "recons_v3", False) and model_slug == "cnnlstm":
+                model_slug = "cnnlstm_recons_v3"
             if train_fraction < 1.0:
                 ckpt_dir = args.checkpoint_dir / "training_fraction_ablation"
                 ckpt_path = ckpt_dir / f"best_{model_slug}_{fraction_pct}pct.pt"
@@ -561,6 +570,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--biophys", action="store_true",
                    help="Use biophysics preprocessing pipeline (notch+bandpass+decimate+Mel). "
                         "Only applies to --model cnn_lstm.")
+    p.add_argument("--recons-v3", action="store_true",
+                   help="Use AE-reconstructed v3 data (data/89335547_recons_v3/).")
     # Paths
     p.add_argument("--data-root", type=Path, default=_ROOT / "data",
                    help="Directory containing *.hdf5 session files")

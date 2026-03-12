@@ -50,6 +50,7 @@ lightning_logs/
 # Data
 # data
 data/*.hdf5
+data/Latent/
 bids_data
 *.tar.gz
 
