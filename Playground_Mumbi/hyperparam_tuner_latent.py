@@ -1,10 +1,9 @@
 """Hyperparameter tuner for the latent-space CNN+LSTM model.
 
-Operates on pre-computed AE latent vectors stored in
-``data/preprocessed/emg_latent_ae_v2.hdf5``
-(shape: N_frames × 1024 float32, at 32 ms / frame).  The SpectrogramNorm /
+Operates on pre-computed AE latent vectors stored in session HDF5 files
+(shape: N_frames × 256 float32, at 32 ms / frame).  The SpectrogramNorm /
 MultiBandRotationInvariantMLP front-end used in the raw-EMG pipeline is
-replaced by a single ``nn.Linear(1024, proj_features)`` projection layer; all
+replaced by a single ``nn.Linear(256, proj_features)`` projection layer; all
 other training logic (CTC loss, LR schedule, greedy decoding) is identical.
 
 Supports two search modes:
@@ -35,7 +34,7 @@ Key flags (all have defaults):
     --confirm-epochs    Re-run best config with N more epochs   (default: 0 = off)
     --early-stopping-patience  Stop trial after N non-improving epochs
                                                                 (default: 0 = off)
-    --trial-timeout     Per-trial wall-clock cap in seconds     (default: 180s)
+    --trial-timeout     Per-trial wall-clock cap in seconds     (default: 300s)
 
 After tuning, launch full training with the best config:
     python -m Playground_Mumbi.train_latent \\
@@ -64,7 +63,9 @@ if str(_ROOT) not in sys.path:
 from emg2qwerty.charset import charset
 from emg2qwerty.decoder import CTCGreedyDecoder
 
-from Playground_Mumbi.data_utils import get_latent_dataloaders
+from torch.utils.data import ConcatDataset, DataLoader
+
+from Playground_Mumbi.data_utils import LatentEMGDataset
 from Playground_Mumbi.model_latent import LatentCNNLSTMModel
 from Playground_Mumbi.train_latent import _lr_lambda, evaluate, train_one_epoch
 
@@ -74,7 +75,7 @@ if hasattr(torch, "AcceleratorError"):
     _OOM_ERRORS = _OOM_ERRORS + (torch.AcceleratorError,)  # type: ignore[attr-defined]
 
 # Fixed latent dimension — defined by the autoencoder
-LATENT_DIM: int = 1024
+LATENT_DIM: int = 256
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +143,9 @@ def make_fine_search_space(
 def run_trial(
     trial_idx: int,
     config: dict[str, Any],
-    hdf5_path: Path,
+    data_dir: Path,
+    config_path: Path,
+    trial_sessions: int,
     trial_epochs: int,
     window_length: int,
     batch_size: int,
@@ -155,14 +158,42 @@ def run_trial(
     Returns:
         ``(best_val_cer, timed_out, epochs_run)``
     """
+    import yaml as _yaml
     torch.manual_seed(trial_idx)
 
-    loaders = get_latent_dataloaders(
-        hdf5_path=hdf5_path,
-        window_length=window_length,
-        batch_size=batch_size,
-        num_workers=0,
-    )
+    with open(config_path) as _f:
+        split_cfg = _yaml.safe_load(_f)
+
+    def _build_loader(sessions: list[str]) -> DataLoader:
+        datasets = [
+            LatentEMGDataset(
+                data_dir / f"{s}_latent_v2.hdf5",
+                window_length=window_length,
+            )
+            for s in sessions
+        ]
+        return DataLoader(
+            ConcatDataset(datasets),
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+        )
+
+    train_sessions = [e["session"] for e in split_cfg["train"]][:trial_sessions]
+    val_sessions   = [e["session"] for e in split_cfg["val"]]
+
+    loaders = {
+        "train": _build_loader(train_sessions),
+        "val":   DataLoader(
+            ConcatDataset([
+                LatentEMGDataset(data_dir / f"{s}_latent_v2.hdf5", window_length=window_length)
+                for s in val_sessions
+            ]),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+        ),
+    }
 
     effective_dropout = config["dropout"] if config["lstm_layers"] > 1 else 0.0
     model = LatentCNNLSTMModel(
@@ -266,7 +297,9 @@ def _run_phase(
     phase_label: str,
     num_trials: int,
     search_space: dict[str, dict[str, Any]],
-    hdf5_path: Path,
+    data_dir: Path,
+    config_path: Path,
+    trial_sessions: int,
     trial_epochs: int,
     window_length: int,
     batch_size: int,
@@ -293,7 +326,9 @@ def _run_phase(
             val_cer, timed_out, epochs_run = run_trial(
                 trial_idx=global_idx,
                 config=config,
-                hdf5_path=hdf5_path,
+                data_dir=data_dir,
+                config_path=config_path,
+                trial_sessions=trial_sessions,
                 trial_epochs=trial_epochs,
                 window_length=window_length,
                 batch_size=batch_size,
@@ -361,9 +396,14 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # --- Data ---
-    p.add_argument("--hdf5-path", type=Path,
-                   default=_ROOT / "data" / "preprocessed" / "emg_latent_ae_v2.hdf5",
-                   help="Path to the latent EMG HDF5 file")
+    p.add_argument("--data-dir", type=Path,
+                   default=_ROOT / "data" / "89335547_latent_v2",
+                   help="Directory containing latent HDF5 session files")
+    p.add_argument("--latent-config", type=Path,
+                   default=_ROOT / "config" / "user" / "single_user.yaml",
+                   help="YAML file defining train/val/test latent session split")
+    p.add_argument("--trial-sessions", type=int, default=8,
+                   help="Number of train sessions to use per tuning trial (for speed)")
     p.add_argument("--output", type=Path, default=None,
                    help="Where to write the best hyperparameters YAML "
                         "(default: checkpoints/best_hyperparams_cnn_lstm_latent.yaml)")
@@ -395,7 +435,7 @@ def parse_args() -> argparse.Namespace:
                    help="If >0, re-run the overall best config with this many epochs "
                         "before saving to validate it isn't noise. 0 = off.")
     # --- Per-trial settings ---
-    p.add_argument("--trial-timeout", type=float, default=180.0,
+    p.add_argument("--trial-timeout", type=float, default=300.0,
                    help="Per-trial wall-clock cap in seconds. Set 0 to disable.")
     p.add_argument("--early-stopping-patience", type=int, default=0,
                    help="Stop a trial after this many consecutive non-improving "
@@ -432,8 +472,10 @@ def main() -> None:
     # ---- Startup banner ----
     print(f"Device            : {device}")
     print(f"Model             : CNN+LSTM (latent)")
-    print(f"Pipeline          : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)")
-    print(f"HDF5              : {args.hdf5_path}")
+    print(f"Pipeline          : latent (256-dim AE vectors @ 32ms/frame)")
+    print(f"Data dir          : {args.data_dir}")
+    print(f"Latent config     : {args.latent_config}")
+    print(f"Trial sessions    : {args.trial_sessions}")
     print(f"Window length     : {args.window_length} latent frames (≈ {args.window_length * 32 / 1000:.1f}s)")
     print(f"Search mode       : {args.search_mode}")
     if args.search_mode == "two-phase":
@@ -469,7 +511,9 @@ def main() -> None:
         phase_label="C",
         num_trials=coarse_trials,
         search_space=active_space,
-        hdf5_path=args.hdf5_path,
+        data_dir=args.data_dir,
+        config_path=args.latent_config,
+        trial_sessions=args.trial_sessions,
         trial_epochs=coarse_epochs,
         window_length=args.window_length,
         batch_size=args.batch_size,
@@ -505,7 +549,9 @@ def main() -> None:
                 phase_label=label,
                 num_trials=args.fine_trials,
                 search_space=fine_space,
-                hdf5_path=args.hdf5_path,
+                data_dir=args.data_dir,
+                config_path=args.latent_config,
+                trial_sessions=args.trial_sessions,
                 trial_epochs=args.fine_epochs,
                 window_length=args.window_length,
                 batch_size=args.batch_size,
@@ -547,7 +593,9 @@ def main() -> None:
             confirm_cer, _, confirm_epochs_run = run_trial(
                 trial_idx=confirm_seed,
                 config=best_config,
-                hdf5_path=args.hdf5_path,
+                data_dir=args.data_dir,
+                config_path=args.latent_config,
+                trial_sessions=args.trial_sessions,
                 trial_epochs=args.confirm_epochs,
                 window_length=args.window_length,
                 batch_size=args.batch_size,
@@ -591,7 +639,9 @@ def main() -> None:
         "dropout":       float(best_config["dropout"]),
         # Metadata (ignored by train_latent.py, useful for auditing)
         "trial_val_cer":      round(float(best_cer), 4),
-        "hdf5_path":          str(args.hdf5_path),
+        "data_dir":           str(args.data_dir),
+        "latent_config":      str(args.latent_config),
+        "num_trial_sessions": args.trial_sessions,
         "window_length":      args.window_length,
         "search_mode":        args.search_mode,
         "search_phase_found": best_phase,

@@ -1,6 +1,6 @@
 """Latent-space CNN+LSTM model for EMG keystroke prediction.
 
-Operates on pre-computed AE latent vectors (1024-dim @ 32 ms/frame).
+Operates on pre-computed AE latent vectors (256-dim @ 32 ms/frame).
 The SpectrogramNorm + MultiBandRotationInvariantMLP front-end from the raw-EMG
 pipeline is replaced by a single nn.Linear(latent_dim, proj_features) projection,
 followed by LayerNorm and Dropout.  The rest of the architecture (1D CNN blocks
@@ -39,7 +39,7 @@ class LatentCNNLSTMModel(nn.Module):
     hybrid architecture on latent inputs.  The spectrogram preprocessing
     front-end (SpectrogramNorm → MultiBandRotationInvariantMLP) is replaced by
     a single linear projection layer so the model operates directly on the
-    1024-dim AE latent vectors.
+    256-dim AE latent vectors.
 
     Input  shape: ``(T, N, latent_dim)``  — time-first batch of latent vectors.
     Output shape: ``(T, N, num_classes)`` — log-softmax activations,
@@ -49,7 +49,7 @@ class LatentCNNLSTMModel(nn.Module):
     so ``emission_lengths == input_lengths`` when computing CTC loss.
 
     Args:
-        latent_dim:    Dimensionality of the input latent vectors (default 1024).
+        latent_dim:    Dimensionality of the input latent vectors (default 256).
         proj_features: Output size of the linear projection layer fed into CNN.
         cnn_channels:  Number of channels in each 1D CNN block.
         cnn_kernel:    Kernel width for 1D convolutions.
@@ -63,7 +63,7 @@ class LatentCNNLSTMModel(nn.Module):
 
     def __init__(
         self,
-        latent_dim: int = 1024,
+        latent_dim: int = 256,
         proj_features: int = 384,
         cnn_channels: int = 256,
         cnn_kernel: int = 3,
