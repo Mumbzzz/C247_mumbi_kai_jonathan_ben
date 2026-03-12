@@ -1,0 +1,16 @@
+lr: 0.0004359400788954502
+weight_decay: 1.188590529831906e-05
+num_features: 576
+block_channels: 24
+num_blocks: 2
+kernel_width: 24
+trial_val_cer: 100.0
+hdf5_path: /home/benforbes/C247_mumbikaijonathanben/data/emg_latent_ae_v2.hdf5
+window_length: 500
+stride: 50
+search_mode: coarse-only
+search_phase_found: C
+num_coarse_trials: 2
+num_fine_trials: 0
+coarse_epochs: 3
+tuned_at: '2026-03-10 15:19:51'

@@ -1,0 +1,15 @@
+lr: 0.0012685490562766492
+weight_decay: 0.00191599162313314
+mlp_features: 512
+block_channels: 32
+num_blocks: 3
+kernel_width: 24
+trial_val_cer: 82.4103
+search_mode: two-phase
+search_phase_found: F2
+num_coarse_trials: 20
+num_fine_trials: 30
+coarse_epochs: 8
+fine_epochs: 15
+fine_shrink: 3.0
+tuned_at: '2026-03-10 18:32:30'

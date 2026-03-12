@@ -1,0 +1,9 @@
+run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,notes
+CNN_16ch_1000hz_100pct_20260307_223224,2026-03-07 22:32:24,CNN,151,16,1000,1.0,log_spectrogram,nan,1.830334,52.5255,38.38,ablation_sampling_1000hz
+CNN_16ch_125hz_100pct_20260308_012505,2026-03-08 01:25:05,CNN,151,16,125,1.0,log_spectrogram,nan,nan,99.4126,99.98,ablation_sampling_125hz
+CNN_16ch_2000hz_100pct_20260304_170649,2026-03-04 17:06:49,CNN,151,16,2000,1.0,log_spectrogram,nan,0.979764,18.5202,22.28,baseline_2000hz_16ch
+CNN_16ch_250hz_100pct_20260308_002614,2026-03-08 00:26:14,CNN,151,16,250,1.0,log_spectrogram,nan,2.851159,79.1537,76.12,ablation_sampling_250hz
+CNN_16ch_500hz_100pct_20260307_233040,2026-03-07 23:30:40,CNN,151,16,500,1.0,log_spectrogram,nan,2.240959,58.4183,46.57,ablation_sampling_500hz
+CNN_2ch_2000hz_100pct_20260308_155533,2026-03-08 15:55:33,CNN,151,2,2000,1.0,log_spectrogram,nan,1.893237,40.8507,45.0,ablation_channels_2ch
+CNN_4ch_2000hz_100pct_20260308_144438,2026-03-08 14:44:38,CNN,151,4,2000,1.0,log_spectrogram,nan,1.258521,24.8782,27.12,ablation_channels_4ch
+CNN_8ch_2000hz_100pct_20260308_133051,2026-03-08 13:30:51,CNN,151,8,2000,1.0,log_spectrogram,nan,0.985033,18.6531,23.3,ablation_channels_8ch

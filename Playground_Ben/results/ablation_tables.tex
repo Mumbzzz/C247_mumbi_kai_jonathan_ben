@@ -1,0 +1,88 @@
+% ============================================================
+% Ablation Study Results Tables
+% Generated from Playground_Ben/scripts/plot_ablation_bars.py
+% ============================================================
+% Requires: \usepackage{booktabs}
+
+% ── Table 0: Baseline CNN Configuration ──────────────────────────────────────
+% This model produced the 16 ch/hand baseline row in both ablation tables
+% (Val CER = 18.52%, Test CER = 22.28%).
+
+\begin{table}[h]
+  \centering
+  \caption{Baseline TDSConvCTC configuration. All ablation experiments use this
+           architecture; only the transform pipeline (channel count or sampling
+           rate) varies across conditions.}
+  \label{tab:baseline_cnn_config}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} \\
+    \midrule
+    Architecture          & TDSConvCTC \\
+    Input representation  & Log-spectrogram \\
+    Sampling rate         & 2000\,Hz \\
+    Electrode channels    & 16 per hand (32 total) \\
+    Spectral bins         & 33 \quad ($n_{\text{fft}}=64$, hop\,=\,16) \\
+    \texttt{in\_features} & 528 \quad ($33 \times 16$) \\
+    MLP projection        & [384] per band $\rightarrow$ 768 combined \\
+    TDS blocks            & 4 \\
+    Block channels        & 24 \\
+    Kernel width          & 32 \\
+    Receptive field       & 124 spectral frames \\
+    Parameters            & ${\approx}5.3$\,M \\
+    Optimizer             & Adam, $lr = 1\times10^{-3}$ \\
+    LR schedule           & Linear warmup + cosine annealing \\
+    Epochs                & 150 \\
+    Batch size            & 32 \\
+    Window length         & 4\,s (8000 samples @ 2\,kHz) \\
+    \midrule
+    Val CER               & 18.52\% \\
+    Test CER              & 22.28\% \\
+    Training time         & 3\,h 51\,m \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% ── Table 1: Channel Count Ablation ─────────────────────────────────────────
+
+\begin{table}[h]
+  \centering
+  \caption{Channel count ablation results at 2000\,Hz. Val and test CER are
+           reported as the best (lowest) validation CER checkpoint evaluated
+           on the respective split.}
+  \label{tab:channel_ablation}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Channels / Hand} & \textbf{Val CER (\%)} & \textbf{Test CER (\%)} & \textbf{Train Time} \\
+    \midrule
+    16 (full)  & 18.52 & 22.28 & 3h 51m \\
+     8         & 18.65 & 23.30 & 1h 13m \\
+     4         & 24.88 & 27.12 & 1h 10m \\
+     2         & 40.85 & 45.00 & 1h 09m \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% ── Table 2: Temporal Downsampling Ablation ──────────────────────────────────
+
+\begin{table}[h]
+  \centering
+  \caption{Temporal downsampling ablation results. The 2000\,Hz baseline uses
+           the original log-spectrogram pipeline. Downsampled runs apply a
+           zero-phase bandpass filter (20--460\,Hz) followed by anti-aliased
+           decimation before the spectrogram transform.}
+  \label{tab:sampling_ablation}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Sample Rate} & \textbf{Downsample Factor} & \textbf{Val CER (\%)} & \textbf{Test CER (\%)} & \textbf{Train Time} \\
+    \midrule
+    2000\,Hz & $1\times$ (baseline) & 18.52 & 22.28 & 3h 51m \\
+    1000\,Hz & $2\times$            & 52.53 & 38.38 &    58m \\
+     500\,Hz & $4\times$            & 58.42 & 46.57 &    55m \\
+     250\,Hz & $8\times$            & 79.15 & 76.12 &    58m \\
+     125\,Hz & $16\times$           & 99.41 & 99.98 & 1h 01m \\
+    \bottomrule
+  \end{tabular}
+\end{table}
