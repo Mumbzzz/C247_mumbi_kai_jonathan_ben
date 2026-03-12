@@ -811,3 +811,210 @@ Total train time: 00:01:35 (95.6s)
   Test DER         : 6.04%
   Test SER         : 15.40%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_0057hrs
+Model           : rnn (latent)
+Pipeline        : latent (data_latent/, 256-dim, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 3,818,595
+Epochs planned  : 150  |  Epochs completed: 77
+Total train time: 01:49:54 (6594.9s)
+--- Hyperparameters ---
+  lr=0.0002930411089852363
+  weight_decay=0.004206457872860565
+  hidden_size=384
+  num_layers=1
+  dropout=0.32511062717023487
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 475.55%
+  Test CER         : 176.46%
+  Test IER         : 34.75%
+  Test DER         : 95.53%
+  Test SER         : 46.18%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_0727hrs
+Model           : rnn (latent)
+Pipeline        : latent (data_latent/, 256-dim, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 3,818,595
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 03:33:32 (12812.9s)
+--- Hyperparameters ---
+  lr=0.0002508421445867786
+  weight_decay=0.001519913331630567
+  hidden_size=384
+  num_layers=1
+  dropout=0.30381051747058585
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 683.40%
+  Test CER         : 161.26%
+  Test IER         : 43.98%
+  Test DER         : 75.20%
+  Test SER         : 42.08%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1013hrs
+Model           : conformer (latent)
+Pipeline        : latent (data_latent/, 256-dim, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 14,364,771
+Epochs planned  : 150  |  Epochs completed: 5
+Total train time: 00:07:16 (436.7s)
+--- Hyperparameters ---
+  lr=0.0007696000075081145
+  weight_decay=0.028541484701707275
+  d_model=384
+  num_heads=4
+  conv_kernel_size=15
+  num_layers=4
+  dropout=0.21662495060900783
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 95.56%
+  Test CER         : 95.38%
+  Test IER         : 84.64%
+  Test DER         : 0.35%
+  Test SER         : 10.38%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1116hrs
+Model           : rnn
+Pipeline        : recons (data_recons/, LogSpectrogram, 16ch, 62.5 Hz)
+Device          : cuda
+Parameters      : 12,058,531
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:02:15 (135.8s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  hidden_size=512
+  num_layers=2
+  dropout=0.2
+  batch_size=4
+  window_length=125
+--- Results ---
+  Best val CER    : inf%
+  Test CER         : 100.00%
+  Test IER         : 100.00%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1208hrs
+Model           : rnn
+Pipeline        : recons (data_recons/, LogSpectrogram, 16ch, 62.5 Hz)
+Device          : cuda
+Parameters      : 5,712,291
+Epochs planned  : 150  |  Epochs completed: 9
+Total train time: 00:10:55 (655.6s)
+--- Hyperparameters ---
+  lr=0.0004359400788954502
+  weight_decay=0.002795255278750788
+  hidden_size=256
+  num_layers=3
+  dropout=0.21001172734764773
+  batch_size=32
+  window_length=125
+--- Results ---
+  Best val CER    : 100.00%
+  Test CER         : 100.00%
+  Test IER         : 100.00%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1424hrs
+Model           : rnn
+Pipeline        : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)
+Device          : cuda
+Parameters      : 9,557,507
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:01:20 (80.9s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  proj_dim=128
+  hidden_size=512
+  num_layers=2
+  dropout=0.2
+  batch_size=4
+  window_length=500
+--- Results ---
+  Best val CER    : 100.00%
+  Test CER         : 100.00%
+  Test IER         : 100.00%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1425hrs
+Model           : conformer
+Pipeline        : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)
+Device          : cuda
+Parameters      : 3,271,683
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:00:21 (21.1s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  proj_dim=128
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.2
+  batch_size=4
+  window_length=500
+--- Results ---
+  Best val CER    : 100.00%
+  Test CER         : 100.00%
+  Test IER         : 100.00%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1440hrs
+Model           : conformer
+Pipeline        : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)
+Device          : cuda
+Parameters      : 3,271,683
+Epochs planned  : 150  |  Epochs completed: 42
+Total train time: 00:10:49 (649.2s)
+--- Hyperparameters ---
+  lr=0.0008453241881083158
+  weight_decay=0.02095814679480875
+  proj_dim=128
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.11692790270649321
+  batch_size=32
+  window_length=500
+--- Results ---
+  Best val CER    : 64.46%
+  Test CER         : 79.63%
+  Test IER         : 11.36%
+  Test DER         : 15.59%
+  Test SER         : 52.67%
+#################################################

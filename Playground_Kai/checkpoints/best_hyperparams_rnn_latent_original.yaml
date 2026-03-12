@@ -1,0 +1,17 @@
+lr: 0.0002508421445867786
+weight_decay: 0.001519913331630567
+hidden_size: 384
+num_layers: 1
+dropout: 0.30381051747058585
+trial_val_cer: 97.8358
+data_root: D:\C247_mumbikaijonathanben\data_latent
+num_trial_sessions: 8
+window_length: 125
+search_mode: two-phase
+search_phase_found: C
+num_coarse_trials: 25
+num_fine_trials: 10
+coarse_epochs: 6
+fine_epochs: 6
+fine_shrink: 3.0
+tuned_at: '2026-03-12 03:53:16'

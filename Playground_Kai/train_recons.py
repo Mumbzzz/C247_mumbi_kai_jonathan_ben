@@ -1,28 +1,24 @@
-"""Training and evaluation script for latent-space EMG-to-keystroke models.
+"""Training and evaluation script for the recons EMG-to-keystroke model.
 
-Operates on pre-computed AE latent vectors stored in ``data_latent/*_recons_v3.hdf5``
-(shape: N_frames × 256 float32).
-
-The front-end SpectrogramNorm + MultiBandRotationInvariantMLP from the raw
-EMG pipeline is removed; instead a single ``nn.Linear(1024, d_model)`` projects
-the latent vectors directly into the model dimension.
+Uses reconstructed EMG data from ``data_recons/*_recons_v3.hdf5`` (62.5 Hz).
+Operates directly on raw reconstructed channels (no STFT), using a per-band
+linear projection into an RNN or Conformer encoder.
 
 Run from the workspace root with:
-    python -m Playground_Kai.train_latent [options]
-    python Playground_Kai/train_latent.py [options]
+    python -m Playground_Kai.train_recons [options]
 
-Key flags:
-    --model          rnn | conformer  (default: rnn)
+Key flags (all have defaults, so a bare invocation will start training):
     --epochs         Number of training epochs  (default: 80)
     --batch-size     Batch size                 (default: 32)
-    --window-length  Latent frames per window   (default: 125, ≈ 4 s @ 32 ms)
-    --data-root      Directory with *_recons_v3.hdf5 files (default: data_latent/)
-    --config         Train/val/test split YAML  (default: config/user/single_user.yaml)
+    --hidden-size    LSTM hidden size / dir      (default: 512)
+    --num-layers     Stacked BiLSTM layers       (default: 2)
+    --lr             Peak learning rate          (default: 5e-4)
     --resume         Path to a checkpoint .pt to continue training
-    --from-hyperparams  YAML file of hyperparameters
+    --num-workers    DataLoader workers          (default: 0, safe on Windows)
 
 The best checkpoint (lowest val CER) is saved to
-    Playground_Kai/checkpoints/best_latent_{rnn,conformer}.pt
+    Playground_Kai/checkpoints/best_{rnn,conformer}_recons.pt
+and automatically loaded for the final test evaluation.
 """
 
 from __future__ import annotations
@@ -38,6 +34,8 @@ import yaml
 import torch
 from torch import nn
 
+# Ensure workspace root is on sys.path so both `emg2qwerty` and `Playground_Kai`
+# are importable regardless of where the script is invoked from.
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -47,12 +45,9 @@ from emg2qwerty.data import LabelData
 from emg2qwerty.decoder import CTCGreedyDecoder
 from emg2qwerty.metrics import CharacterErrorRates
 
-from Playground_Kai.data_utils import get_latent_dataloaders
-from Playground_Kai.model import LatentRNNEncoder, LatentConformerEncoder
+from Playground_Kai.data_utils import get_recons_dataloaders
+from Playground_Kai.model import ReconsRNNEncoder, ReconsConformerEncoder
 from scripts.logger import log_epoch, log_summary, make_run_id
-
-# Fixed latent dimension — defined by the autoencoder (256 for current _recons_v3.hdf5 files)
-LATENT_DIM: int = 256
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +60,7 @@ def _lr_lambda(
     total_steps: int,
     min_lr_ratio: float,
 ) -> float:
+    """Multiplier for LambdaLR: linear warmup then cosine decay."""
     if step < warmup_steps:
         return float(step) / max(1, warmup_steps)
     progress = float(step - warmup_steps) / max(1, total_steps - warmup_steps)
@@ -89,14 +85,14 @@ def train_one_epoch(
     total_loss = 0.0
 
     for batch in loader:
-        inputs = batch["inputs"].to(device)           # (T, N, 1024)
-        targets = batch["targets"].to(device)         # (T_tgt, N)
+        inputs = batch["inputs"].to(device)
+        targets = batch["targets"].to(device)
         input_lengths = batch["input_lengths"].to(device)
         target_lengths = batch["target_lengths"].to(device)
 
         optimizer.zero_grad()
 
-        emissions = model(inputs)   # (T, N, num_classes)
+        emissions = model(inputs)
 
         loss = criterion(
             emissions,
@@ -123,20 +119,25 @@ def evaluate(
     device: torch.device,
     decoder: CTCGreedyDecoder,
 ) -> tuple[float, dict[str, float]]:
-    """Evaluate the model; returns (mean_loss, metrics_dict)."""
+    """Evaluate the model on a DataLoader.
+
+    Returns:
+        Tuple of (mean_loss, metrics_dict) where metrics_dict contains
+        CER, IER, DER, SER as percentages.
+    """
     model.eval()
     total_loss = 0.0
     criterion = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
     cer_metric = CharacterErrorRates()
 
     for batch in loader:
-        inputs = batch["inputs"].to(device)           # (T, N, 1024)
+        inputs = batch["inputs"].to(device)
         targets = batch["targets"]
         input_lengths = batch["input_lengths"]
         target_lengths = batch["target_lengths"]
 
         with torch.backends.cudnn.flags(enabled=False):
-            emissions = model(inputs)                 # (T, N, num_classes)
+            emissions = model(inputs)
 
         loss = criterion(
             emissions,
@@ -166,6 +167,7 @@ def evaluate(
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
+    # Pre-parse --from-hyperparams so its values can seed the main parser defaults.
     _pre = argparse.ArgumentParser(add_help=False)
     _pre.add_argument("--from-hyperparams", type=Path, default=None)
     _pre_args, _ = _pre.parse_known_args()
@@ -178,18 +180,17 @@ def parse_args() -> argparse.Namespace:
         _hp_display = ", ".join(
             f"{k}={v}" for k, v in _hp.items()
             if k in {"lr", "hidden_size", "num_layers", "dropout", "weight_decay",
-                     "d_model", "num_heads", "conv_kernel_size"}
+                     "d_model", "num_heads", "conv_kernel_size", "proj_dim"}
         )
         print(f"  {_hp_display}")
 
     p = argparse.ArgumentParser(
-        description="Train a latent-space EMG-to-keystroke model",
+        description="Train the RNN/Conformer model on recons EMG data",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    # Data
-    p.add_argument("--data-root", type=Path,
-                   default=_ROOT / "data_latent",
-                   help="Directory containing *_recons_v3.hdf5 latent session files")
+    # Paths
+    p.add_argument("--data-root", type=Path, default=_ROOT / "data_recons",
+                   help="Directory containing *_recons_v3.hdf5 session files")
     p.add_argument("--config", type=Path,
                    default=_ROOT / "config" / "user" / "single_user.yaml",
                    help="Path to the train/val/test split YAML")
@@ -201,9 +202,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--num-workers", type=int, default=0,
                    help="DataLoader workers (0 = main process, safest on Windows)")
-    p.add_argument("--window-length", type=int, default=125,
-                   help="Latent frames per training window (125 ≈ 4 s at 32 ms/frame)")
-    # Model
+    p.add_argument("--window-length", type=int, default=500,
+                   help="Recons EMG samples per training window (500 = 8 s @ 62.5 Hz)")
+    p.add_argument("--proj-dim", type=int, default=_hp.get("proj_dim", 128),
+                   help="Per-band linear projection dimension before RNN/Conformer")
+    # Model — defaults overridden by --from-hyperparams if provided
     p.add_argument("--model", choices=["rnn", "conformer"], default="rnn",
                    help="Model architecture to train")
     p.add_argument("--hidden-size", type=int, default=_hp.get("hidden_size", 512),
@@ -216,21 +219,25 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--d-model", type=int, default=_hp.get("d_model", 256),
                    help="(Conformer) feature dimension; must be divisible by --num-heads")
     p.add_argument("--num-heads", type=int, default=_hp.get("num_heads", 4),
-                   help="(Conformer) self-attention heads")
+                   help="(Conformer) self-attention heads; must evenly divide --d-model")
     p.add_argument("--conv-kernel-size", type=int, default=_hp.get("conv_kernel_size", 31),
                    help="(Conformer) depthwise conv kernel size; must be odd")
     # Optimiser / scheduler
-    p.add_argument("--lr", type=float, default=_hp.get("lr", 5e-4))
-    p.add_argument("--weight-decay", type=float, default=_hp.get("weight_decay", 1e-2))
-    p.add_argument("--min-lr", type=float, default=1e-5)
-    p.add_argument("--warmup-epochs", type=int, default=5)
+    p.add_argument("--lr", type=float, default=_hp.get("lr", 5e-4),
+                   help="Peak (post-warmup) learning rate for AdamW")
+    p.add_argument("--weight-decay", type=float, default=_hp.get("weight_decay", 1e-2),
+                   help="AdamW weight decay")
+    p.add_argument("--min-lr", type=float, default=1e-5,
+                   help="Minimum learning rate at the end of cosine decay")
+    p.add_argument("--warmup-epochs", type=int, default=5,
+                   help="Epochs of linear LR warmup before cosine decay begins")
     # Resume / test-only / hyperparams
     p.add_argument("--resume", type=Path, default=None,
                    help="Checkpoint .pt file to resume training from")
     p.add_argument("--test-only", action="store_true",
-                   help="Skip training: load best checkpoint and run test evaluation only")
+                   help="Skip training: load the best checkpoint and run test evaluation only")
     p.add_argument("--from-hyperparams", type=Path, default=None,
-                   help="YAML file of hyperparameters (e.g. from hyperparam_tuner.py)")
+                   help="YAML file of hyperparameters (e.g. from hyperparam_tuner_recons.py)")
     p.add_argument("--notes", type=str, default="",
                    help="Free-text annotation written to the CSV log")
     return p.parse_args()
@@ -248,19 +255,21 @@ def main() -> None:
 
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    _pipeline_label = "latent (data_latent/, 256-dim, single_user.yaml split)"
-    _sampling_rate  = 62.5    # Hz equivalent (approx, based on new _recons_v3.hdf5 files)
-    _input_type     = "latent"
-    _num_channels   = 32      # 2 wrists × 16 channels (informational only)
-    ckpt_stem       = f"best_latent_{args.model}"
+    in_channels        = 16
+    proj_dim           = args.proj_dim
+    ckpt_stem          = f"best_{args.model}_recons_raw"
 
+    _pipeline_label = "recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)"
+    _num_channels   = in_channels * 2          # ×2 wrists
+    _sampling_rate  = 63                       # ~62.5 Hz → 63 for CSV logger
+    _input_type     = "raw_channels"
     print(f"Pipeline    : {_pipeline_label}")
 
     # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
     print("Building data loaders …")
-    loaders = get_latent_dataloaders(
+    loaders = get_recons_dataloaders(
         data_root=args.data_root,
         config_path=args.config,
         window_length=args.window_length,
@@ -279,29 +288,24 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    def _build_model(
-        model_type: str,
-        hparams: dict,
-    ) -> nn.Module:
-        if model_type == "conformer":
-            return LatentConformerEncoder(
-                latent_dim=LATENT_DIM,
-                d_model=int(hparams.get("d_model", args.d_model)),
-                num_heads=int(hparams.get("num_heads", args.num_heads)),
-                num_layers=int(hparams.get("num_layers", args.num_layers)),
-                conv_kernel_size=int(hparams.get("conv_kernel_size", args.conv_kernel_size)),
-                dropout=float(hparams.get("dropout", args.dropout)),
-            ).to(device)
-        else:
-            return LatentRNNEncoder(
-                latent_dim=LATENT_DIM,
-                mlp_features=(384,),
-                hidden_size=int(hparams.get("hidden_size", args.hidden_size)),
-                num_layers=int(hparams.get("num_layers", args.num_layers)),
-                dropout=float(hparams.get("dropout", args.dropout)),
-            ).to(device)
-
-    model = _build_model(args.model, vars(args))
+    if args.model == "conformer":
+        model = ReconsConformerEncoder(
+            in_channels=in_channels,
+            proj_dim=proj_dim,
+            d_model=args.d_model,
+            num_heads=args.num_heads,
+            num_layers=args.num_layers,
+            conv_kernel_size=args.conv_kernel_size,
+            dropout=args.dropout,
+        ).to(device)
+    else:
+        model = ReconsRNNEncoder(
+            in_channels=in_channels,
+            proj_dim=proj_dim,
+            hidden_size=args.hidden_size,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+        ).to(device)
     print(f"Model       : {args.model}")
     print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,}")
 
@@ -316,8 +320,26 @@ def main() -> None:
                 "Train first or pass --checkpoint-dir pointing at an existing checkpoint."
             )
         ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
+
         saved_args = ckpt.get("args", {})
-        model = _build_model(args.model, saved_args)
+        if args.model == "conformer":
+            model = ReconsConformerEncoder(
+                in_channels=in_channels,
+                proj_dim=int(saved_args.get("proj_dim", proj_dim)),
+                d_model=int(saved_args.get("d_model", args.d_model)),
+                num_heads=int(saved_args.get("num_heads", args.num_heads)),
+                num_layers=int(saved_args.get("num_layers", args.num_layers)),
+                conv_kernel_size=int(saved_args.get("conv_kernel_size", args.conv_kernel_size)),
+                dropout=float(saved_args.get("dropout", args.dropout)),
+            ).to(device)
+        else:
+            model = ReconsRNNEncoder(
+                in_channels=in_channels,
+                proj_dim=int(saved_args.get("proj_dim", proj_dim)),
+                hidden_size=int(saved_args.get("hidden_size", args.hidden_size)),
+                num_layers=int(saved_args.get("num_layers", args.num_layers)),
+                dropout=float(saved_args.get("dropout", args.dropout)),
+            ).to(device)
         print(f"Parameters  : {sum(p.numel() for p in model.parameters()):,} (from checkpoint args)")
 
         model.load_state_dict(ckpt["model"])
@@ -353,8 +375,9 @@ def main() -> None:
             final_val_cer=saved_cer,
             test_cer=test_metrics.get("CER", float("nan")),
             training_time_sec=0.0,
-            notes=" ".join(filter(None, [args.notes, "test_only", "latent"])),
+            notes=" ".join(filter(None, [args.notes, "recons", "test_only"])),
         )
+        print(f"Test result logged to results/results_summary_{_logger_model}.csv")
         return
 
     # ------------------------------------------------------------------
@@ -401,7 +424,7 @@ def main() -> None:
     epoch_duration: float = 0.0
     train_start_time = time.perf_counter()
 
-    # Logger setup
+    # --- Logger setup ---
     _logger_model = "CONFORMER" if args.model == "conformer" else "RNN"
     _n_train = len(loaders["train"].dataset)
     _n_total = _n_train + len(loaders["val"].dataset) + len(loaders["test"].dataset)
@@ -497,7 +520,7 @@ def main() -> None:
         final_val_cer=_final_val_cer,
         test_cer=test_metrics.get("CER", float("nan")),
         training_time_sec=total_training_time,
-        notes=" ".join(filter(None, ["latent", args.notes])),
+        notes=" ".join(filter(None, ["recons", args.notes])),
     )
 
     # ------------------------------------------------------------------
@@ -509,10 +532,8 @@ def main() -> None:
     with open(log_path, "a") as log_f:
         log_f.write("\n################### New Entry ###################\n")
         log_f.write(f"Run timestamp   : {run_timestamp}\n")
-        log_f.write(f"Model           : {args.model} (latent)\n")
+        log_f.write(f"Model           : {args.model}\n")
         log_f.write(f"Pipeline        : {_pipeline_label}\n")
-        log_f.write(f"Data root       : {args.data_root}\n")
-        log_f.write(f"Config          : {args.config}\n")
         log_f.write(f"Device          : {device}\n")
         log_f.write(f"Parameters      : {sum(p.numel() for p in model.parameters()):,}\n")
         log_f.write(f"Epochs planned  : {args.epochs}  |  Epochs completed: {epochs_completed}\n")
@@ -520,6 +541,7 @@ def main() -> None:
         log_f.write("--- Hyperparameters ---\n")
         log_f.write(f"  lr={args.lr}\n")
         log_f.write(f"  weight_decay={args.weight_decay}\n")
+        log_f.write(f"  proj_dim={args.proj_dim}\n")
         if args.model == "conformer":
             log_f.write(f"  d_model={args.d_model}\n")
             log_f.write(f"  num_heads={args.num_heads}\n")
@@ -529,7 +551,7 @@ def main() -> None:
         log_f.write(f"  num_layers={args.num_layers}\n")
         log_f.write(f"  dropout={args.dropout}\n")
         log_f.write(f"  batch_size={args.batch_size}\n")
-        log_f.write(f"  window_length={args.window_length} latent frames\n")
+        log_f.write(f"  window_length={args.window_length}\n")
         log_f.write("--- Results ---\n")
         log_f.write(f"  Best val CER    : {best_cer:.2f}%\n")
         for k, v in test_metrics.items():

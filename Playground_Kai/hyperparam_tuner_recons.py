@@ -1,10 +1,9 @@
-"""Hyperparameter tuner for the latent-space EMG-to-keystroke RNN/Conformer model.
+"""Hyperparameter tuner for the recons EMG-to-keystroke RNN/Conformer model.
 
-Operates on pre-computed AE latent vectors stored in ``data_latent/*_recons_v3.hdf5``
-(shape: N_frames × 256 float32).  The SpectrogramNorm /
-MultiBandRotationInvariantMLP front-end used in the raw-EMG pipeline is
-replaced by a single ``nn.Linear(1024, d_model)`` projection layer; all other
-training logic (CTC loss, LR schedule, greedy decoding) is identical.
+Uses reconstructed EMG data from ``data_recons/*_recons_v3.hdf5`` (62.5 Hz).
+Identical two-phase search strategy as ``hyperparam_tuner.py`` but defaults
+window length to 500 frames (≈ 8 s at 62.5 Hz) and writes YAML / checkpoint
+files with ``_recons_raw`` naming so they do not collide with vanilla outputs.
 
 Supports two search modes:
 
@@ -12,16 +11,13 @@ Supports two search modes:
     Phase C (coarse): broad random search over the full search space using a
     short proxy training run per trial.
     Phase F (fine):   for each of the top-K coarse configs, a tighter random
-    search is launched around that config — continuous params are narrowed by
-    ``--fine-shrink``, discrete params are fixed to the coarse-best value.
-    An optional confirmation re-run (``--confirm-epochs``) validates the
-    overall winner with more training before the YAML is saved.
+    search is launched around that config.
 
   coarse-only
-    Classic single-phase random search (same behaviour as the original tuner).
+    Classic single-phase random search.
 
 Usage:
-    python -m Playground_Kai.hyperparam_tuner_latent [options]
+    python -m Playground_Kai.hyperparam_tuner_recons [options]
 
 Key flags (all have defaults):
     --search-mode       two-phase | coarse-only                 (default: two-phase)
@@ -34,13 +30,12 @@ Key flags (all have defaults):
     --confirm-epochs    Re-run best config with N more epochs   (default: 0 = off)
     --early-stopping-patience  Stop trial after N non-improving epochs
                                                                 (default: 0 = off)
+    --trial-sessions    Training sessions per trial (<=16)      (default: 5)
     --trial-timeout     Per-trial wall-clock cap in seconds     (default: 180s)
-    --num-trials        Alias for --coarse-trials (backward compat)
-    --trial-epochs      Alias for --coarse-epochs (backward compat)
 
 After tuning, launch full training with the best config:
-    python -m Playground_Kai.train_latent --model {rnn,conformer} \\
-        --from-hyperparams Playground_Kai/checkpoints/best_hyperparams_{model}_latent.yaml
+    python -m Playground_Kai.train_recons --model {rnn,conformer} \\
+        --from-hyperparams Playground_Kai/checkpoints/best_hyperparams_{model}_recons_raw.yaml
 """
 
 from __future__ import annotations
@@ -65,45 +60,36 @@ if str(_ROOT) not in sys.path:
 from emg2qwerty.charset import charset
 from emg2qwerty.decoder import CTCGreedyDecoder
 
-from Playground_Kai.data_utils import get_latent_session_paths, build_latent_loaders_from_paths
-from Playground_Kai.model import LatentRNNEncoder, LatentConformerEncoder
+from Playground_Kai.data_utils import build_recons_loaders_from_paths, get_recons_session_paths
+from Playground_Kai.model import ReconsRNNEncoder, ReconsConformerEncoder
 
-# torch 2.5+ renamed the CUDA OOM exception to torch.AcceleratorError.
-# Build a tuple of all OOM-related exception types so we can catch either.
 _OOM_ERRORS: tuple[type[BaseException], ...] = (torch.cuda.OutOfMemoryError,)
 if hasattr(torch, "AcceleratorError"):
     _OOM_ERRORS = _OOM_ERRORS + (torch.AcceleratorError,)  # type: ignore[attr-defined]
-
-from Playground_Kai.train_latent import _lr_lambda, evaluate, train_one_epoch
-
-# Fixed latent dimension — defined by the autoencoder (256 for current _recons_v3.hdf5 files)
-LATENT_DIM: int = 256
+from Playground_Kai.train_recons import _lr_lambda, evaluate, train_one_epoch
 
 
 # ---------------------------------------------------------------------------
 # Search space
 # ---------------------------------------------------------------------------
 
-# Each entry is either:
-#   {"type": "log_uniform", "low": <float>, "high": <float>}  — sample exp(U[log(low), log(high)])
-#   {"type": "uniform",     "low": <float>, "high": <float>}  — sample U[low, high]
-#   {"type": "choice",      "choices": [<val>, ...]}          — sample uniformly from list
 SEARCH_SPACE_RNN: dict[str, dict[str, Any]] = {
     "lr":           {"type": "log_uniform", "low": 1e-4,  "high": 1e-3},
-    "hidden_size":  {"type": "choice",      "choices": [256, 384, 512, 768]},
+    "proj_dim":     {"type": "choice",      "choices": [64, 128, 256]},
+    "hidden_size":  {"type": "choice",      "choices": [256, 512, 768]},
     "num_layers":   {"type": "choice",      "choices": [1, 2, 3]},
-    "dropout":      {"type": "uniform",     "low": 0.1,   "high": 0.5},
+    "dropout":      {"type": "uniform",     "low": 0.0,   "high": 0.4},
     "weight_decay": {"type": "log_uniform", "low": 1e-3,  "high": 1e-1},
 }
 
-# d_model choices must be all divisible by all num_heads value, to work.
 SEARCH_SPACE_CONFORMER: dict[str, dict[str, Any]] = {
     "lr":              {"type": "log_uniform", "low": 1e-4,  "high": 1e-3},
+    "proj_dim":        {"type": "choice",      "choices": [64, 128, 256]},
     "d_model":         {"type": "choice",      "choices": [128, 192, 256, 384]},
-    "num_heads":       {"type": "choice",      "choices": [4, 8, 16]},
+    "num_heads":       {"type": "choice",      "choices": [4, 8]},
     "num_layers":      {"type": "choice",      "choices": [2, 4, 6]},
     "conv_kernel_size":{"type": "choice",      "choices": [15, 31]},
-    "dropout":         {"type": "uniform",     "low": 0.1,   "high": 0.4},
+    "dropout":         {"type": "uniform",     "low": 0.0,   "high": 0.4},
     "weight_decay":    {"type": "log_uniform", "low": 1e-3,  "high": 1e-1},
 }
 
@@ -127,24 +113,14 @@ def make_fine_search_space(
     original_space: dict[str, dict[str, Any]],
     shrink_factor: float,
 ) -> dict[str, dict[str, Any]]:
-    """Build a narrowed search space centred on *base_config*.
-
-    Rules per parameter type:
-
-    - ``log_uniform``: new bounds = ``[v / shrink_factor, v * shrink_factor]``
-      clamped to the original bounds so we never leave the original range.
-    - ``uniform``: half-width = ``(original_range / 2) / shrink_factor``
-      centred at ``v``, clamped to original bounds.
-    - ``choice``: fixed to the value in *base_config* (single-element list so
-      ``sample_config`` requires no changes).
-    """
+    """Build a narrowed search space centred on *base_config*."""
     fine_space: dict[str, dict[str, Any]] = {}
     for name, spec in original_space.items():
         v = base_config[name]
         if spec["type"] == "log_uniform":
             new_low  = max(spec["low"],  v / shrink_factor)
             new_high = min(spec["high"], v * shrink_factor)
-            if new_low >= new_high:   # degenerate — fall back to full range
+            if new_low >= new_high:
                 new_low, new_high = spec["low"], spec["high"]
             fine_space[name] = {"type": "log_uniform", "low": new_low, "high": new_high}
         elif spec["type"] == "uniform":
@@ -155,7 +131,6 @@ def make_fine_search_space(
                 new_low, new_high = spec["low"], spec["high"]
             fine_space[name] = {"type": "uniform", "low": new_low, "high": new_high}
         elif spec["type"] == "choice":
-            # Fix discrete params to the coarse best — single-element list.
             fine_space[name] = {"type": "choice", "choices": [v]}
     return fine_space
 
@@ -177,39 +152,24 @@ def run_trial(
     timeout_secs: float = float("inf"),
     early_stopping_patience: int = 0,
 ) -> tuple[float, bool, int]:
-    """Run one proxy training trial on latent EMG vectors.
-
-    Args:
-        trial_idx: Seed for deterministic weight initialisation.
-        config: Hyperparameter dict sampled from the active search space.
-        train_paths: Latent HDF5 paths used for proxy training.
-        val_paths: Latent HDF5 paths used for validation.
-        trial_epochs: Maximum training epochs.
-        window_length: Latent frames per window (default 125 ≈ 4 s @ 32 ms/frame).
-        batch_size: Batch size.
-        device: Torch device.
-        model_type: ``"rnn"`` or ``"conformer"``.
-        timeout_secs: Wall-clock budget in seconds.  Checked **between epochs**.
-        early_stopping_patience: Stop after this many consecutive non-improving
-            validation epochs.  ``0`` disables early stopping.
+    """Run one proxy training trial on recons data.
 
     Returns:
-        ``(best_val_cer, timed_out, epochs_run)`` — best CER seen, whether the
-        timeout was hit, and how many full epochs were completed.
+        ``(best_val_cer, timed_out, epochs_run)``
     """
     torch.manual_seed(trial_idx)
 
-    loaders = build_latent_loaders_from_paths(
+    loaders = build_recons_loaders_from_paths(
         train_paths=train_paths,
         val_paths=val_paths,
         window_length=window_length,
         batch_size=batch_size,
-        num_workers=0,
     )
 
     if model_type == "conformer":
-        model = LatentConformerEncoder(
-            latent_dim=LATENT_DIM,
+        model = ReconsConformerEncoder(
+            in_channels=16,
+            proj_dim=config["proj_dim"],
             d_model=config["d_model"],
             num_heads=config["num_heads"],
             num_layers=config["num_layers"],
@@ -217,14 +177,12 @@ def run_trial(
             dropout=config["dropout"],
         ).to(device)
     else:
-        # Dropout has no effect with a single-layer LSTM
-        effective_dropout = config["dropout"] if config["num_layers"] > 1 else 0.0
-        model = LatentRNNEncoder(
-            latent_dim=LATENT_DIM,
-            mlp_features=(384,),
+        model = ReconsRNNEncoder(
+            in_channels=16,
+            proj_dim=config["proj_dim"],
             hidden_size=config["hidden_size"],
             num_layers=config["num_layers"],
-            dropout=effective_dropout,
+            dropout=config["dropout"],
         ).to(device)
 
     criterion = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
@@ -236,9 +194,7 @@ def run_trial(
 
     steps_per_epoch = len(loaders["train"])
     total_steps = trial_epochs * steps_per_epoch
-    # Warmup fraction matches full training (~10% of steps), scaled to trial length
     warmup_steps = max(1, trial_epochs // 5) * steps_per_epoch
-    # Fix min_lr at 2% of peak for all trials
     min_lr_ratio = 0.02
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -265,30 +221,19 @@ def run_trial(
             else:
                 no_improve_streak += 1
 
-            # Early stopping (patience=0 means disabled)
             if early_stopping_patience > 0 and no_improve_streak >= early_stopping_patience:
                 break
-            # Timeout checked between epochs — cannot interrupt mid-epoch safely.
             if time.perf_counter() - t_trial_start > timeout_secs:
                 timed_out = True
                 break
 
-    except _OOM_ERRORS as e:  # torch.cuda.OutOfMemoryError or torch.AcceleratorError (2.5+)
-        # For AcceleratorError, verify it is actually an OOM — not some other CUDA error.
+    except _OOM_ERRORS as e:
         if not isinstance(e, torch.cuda.OutOfMemoryError) and "out of memory" not in str(e).lower():
             raise
-        # Config requires more GPU memory than available (e.g. large T × T attention
-        # matrix with many heads at full batch size).  Treat as a disqualified trial:
-        # return inf CER so it ranks last and tuning continues with the next config.
         print("\n    [OOM — skipping config]", end="  ", flush=True)
         best_val_cer = float("inf")
 
     finally:
-        # Release all GPU-holding objects before empty_cache().
-        # Order matters: optimizer holds parameter tensor references (and ~2×
-        # model size in Adam state), so it must be deleted first so that del model
-        # actually drops the last reference to those tensors.  empty_cache() then
-        # returns the now-free blocks to the CUDA driver for the next trial.
         del optimizer
         del scheduler
         del model
@@ -296,8 +241,6 @@ def run_trial(
             try:
                 torch.cuda.empty_cache()
             except Exception:
-                # CUDA may still be in an error state after a hard OOM; ignore
-                # cache-flush failures so the tuner can continue to the next trial.
                 pass
 
     return best_val_cer, timed_out, epochs_run
@@ -307,15 +250,14 @@ def run_trial(
 # Phase runner
 # ---------------------------------------------------------------------------
 
-# A result entry: (phase_label, global_trial_idx, config, val_cer)
 TrialResult = tuple[str, int, dict[str, Any], float]
 
 
 def _print_config_inline(config: dict[str, Any], model_type: str) -> None:
-    """Print a one-line config summary (no trailing newline) to stdout."""
     if model_type == "conformer":
         print(
             f"  lr={config['lr']:.2e}"
+            f"  proj={config['proj_dim']}"
             f"  d={config['d_model']}"
             f"  h={config['num_heads']}"
             f"  layers={config['num_layers']}"
@@ -328,6 +270,7 @@ def _print_config_inline(config: dict[str, Any], model_type: str) -> None:
     else:
         print(
             f"  lr={config['lr']:.2e}"
+            f"  proj={config['proj_dim']}"
             f"  hidden={config['hidden_size']}"
             f"  layers={config['num_layers']}"
             f"  dropout={config['dropout']:.3f}"
@@ -341,7 +284,7 @@ def _run_phase(
     phase_label: str,
     num_trials: int,
     search_space: dict[str, dict[str, Any]],
-    train_paths: list[Path],
+    trial_train_paths: list[Path],
     val_paths: list[Path],
     trial_epochs: int,
     window_length: int,
@@ -353,18 +296,7 @@ def _run_phase(
     rng: random.Random,
     trial_idx_offset: int,
 ) -> list[TrialResult]:
-    """Run *num_trials* proxy trials and return all results.
-
-    Catches ``KeyboardInterrupt`` internally: prints a message, stops the phase
-    early, and returns whatever results have been collected so far.
-
-    Args:
-        phase_label: Short label shown in the progress output (e.g. ``"C"`` or
-            ``"F1"``).
-        trial_idx_offset: Added to the local trial index before passing to
-            ``run_trial`` as the random seed, ensuring coarse and fine trials
-            use non-overlapping seeds.
-    """
+    """Run *num_trials* proxy trials and return all results."""
     results: list[TrialResult] = []
     for local_idx in range(num_trials):
         global_idx = trial_idx_offset + local_idx
@@ -381,7 +313,7 @@ def _run_phase(
             val_cer, timed_out, epochs_run = run_trial(
                 trial_idx=global_idx,
                 config=config,
-                train_paths=train_paths,
+                train_paths=trial_train_paths,
                 val_paths=val_paths,
                 trial_epochs=trial_epochs,
                 window_length=window_length,
@@ -420,14 +352,13 @@ def _run_phase(
 # ---------------------------------------------------------------------------
 
 def _print_results_table(results: list[TrialResult], model_type: str) -> None:
-    """Print a ranked results table for all trials across all phases."""
     sorted_results = sorted(results, key=lambda x: x[3])
     if model_type == "conformer":
-        col = 114
+        col = 121
         print("\n" + "=" * col)
         print(
             f"{'Rank':>4}  {'Phase':>5}  {'Trial':>5}  {'val_CER':>8}  {'lr':>10}  "
-            f"{'d_model':>7}  {'heads':>5}  {'layers':>6}  "
+            f"{'proj':>4}  {'d_model':>7}  {'heads':>5}  {'layers':>6}  "
             f"{'conv_k':>6}  {'dropout':>7}  {'weight_decay':>12}"
         )
         print("-" * col)
@@ -435,24 +366,24 @@ def _print_results_table(results: list[TrialResult], model_type: str) -> None:
             cer_str = "   OOM  " if math.isinf(cer) else f"{cer:>7.2f}%"
             print(
                 f"{rank:>4}  {phase:>5}  {global_idx + 1:>5}  {cer_str}  "
-                f"{cfg['lr']:>10.2e}  {cfg['d_model']:>7}  {cfg['num_heads']:>5}  "
+                f"{cfg['lr']:>10.2e}  {cfg['proj_dim']:>4}  {cfg['d_model']:>7}  {cfg['num_heads']:>5}  "
                 f"{cfg['num_layers']:>6}  {cfg['conv_kernel_size']:>6}  "
                 f"{cfg['dropout']:>7.3f}  {cfg['weight_decay']:>12.2e}"
             )
         print("=" * col)
     else:
-        col = 102
+        col = 109
         print("\n" + "=" * col)
         print(
             f"{'Rank':>4}  {'Phase':>5}  {'Trial':>5}  {'val_CER':>8}  {'lr':>10}  "
-            f"{'hidden':>6}  {'layers':>6}  {'dropout':>7}  {'weight_decay':>12}"
+            f"{'proj':>4}  {'hidden':>6}  {'layers':>6}  {'dropout':>7}  {'weight_decay':>12}"
         )
         print("-" * col)
         for rank, (phase, global_idx, cfg, cer) in enumerate(sorted_results, 1):
             cer_str = "   OOM  " if math.isinf(cer) else f"{cer:>7.2f}%"
             print(
                 f"{rank:>4}  {phase:>5}  {global_idx + 1:>5}  {cer_str}  "
-                f"{cfg['lr']:>10.2e}  {cfg['hidden_size']:>6}  "
+                f"{cfg['lr']:>10.2e}  {cfg['proj_dim']:>4}  {cfg['hidden_size']:>6}  "
                 f"{cfg['num_layers']:>6}  {cfg['dropout']:>7.3f}  "
                 f"{cfg['weight_decay']:>12.2e}"
             )
@@ -465,24 +396,23 @@ def _print_results_table(results: list[TrialResult], model_type: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Two-phase hyperparameter tuner for the latent EMG RNN/Conformer model",
+        description="Two-phase hyperparameter tuner for the recons EMG RNN/Conformer model",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # --- Architecture ---
     p.add_argument("--model", choices=["rnn", "conformer"], default="rnn",
                    help="Model architecture to tune")
     # --- Data ---
-    p.add_argument("--data-root", type=Path,
-                   default=_ROOT / "data_latent",
-                   help="Directory containing *_500hz.hdf5 latent session files")
+    p.add_argument("--data-root", type=Path, default=_ROOT / "data_recons",
+                   help="Directory containing *_recons_v3.hdf5 session files")
     p.add_argument("--config", type=Path,
                    default=_ROOT / "config" / "user" / "single_user.yaml",
                    help="Path to the train/val/test split YAML")
     p.add_argument("--output", type=Path, default=None,
                    help="Where to write the best hyperparameters YAML "
-                        "(default: checkpoints/best_hyperparams_{model}_latent.yaml)")
+                        "(default: checkpoints/best_hyperparams_{model}_recons.yaml)")
     p.add_argument("--trial-sessions", type=int, default=5,
-                   help="Training sessions per trial (first N from split YAML)")
+                   help="Training sessions per trial (first N from split YAML, max 16)")
     # --- Search mode ---
     p.add_argument("--search-mode", choices=["two-phase", "coarse-only"],
                    default="two-phase",
@@ -492,12 +422,11 @@ def parse_args() -> argparse.Namespace:
                    help="Configs evaluated in coarse phase (overrides --num-trials)")
     p.add_argument("--coarse-epochs", type=int, default=None,
                    help="Epochs per coarse proxy run (overrides --trial-epochs)")
-    # Backward-compat aliases
     p.add_argument("--num-trials", type=int, default=20,
                    help="Alias for --coarse-trials (backward compat, default: 20)")
     p.add_argument("--trial-epochs", type=int, default=8,
                    help="Alias for --coarse-epochs (backward compat, default: 8)")
-    # --- Fine phase (two-phase only) ---
+    # --- Fine phase ---
     p.add_argument("--fine-trials", type=int, default=10,
                    help="Configs evaluated per fine-phase anchor")
     p.add_argument("--fine-epochs", type=int, default=15,
@@ -505,23 +434,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fine-top-k", type=int, default=3,
                    help="Number of top coarse configs used as fine-phase anchors")
     p.add_argument("--fine-shrink", type=float, default=3.0,
-                   help="Shrink factor for continuous param bounds in fine phase. "
-                        "log-uniform: new range = [v/F, v*F]. "
-                        "Higher = tighter (3.0 is aggressive, 1.5 is loose).")
+                   help="Shrink factor for continuous param bounds in fine phase.")
     # --- Confirmation run ---
     p.add_argument("--confirm-epochs", type=int, default=0,
-                   help="If >0, re-run the overall best config with this many epochs "
-                        "before saving to validate it isn't noise. 0 = off.")
+                   help="If >0, re-run the overall best config with this many epochs. 0 = off.")
     # --- Per-trial settings ---
     p.add_argument("--trial-timeout", type=float, default=180.0,
-                   help="Per-trial wall-clock cap in seconds. "
-                        "Checked between epochs. Set 0 to disable.")
+                   help="Per-trial wall-clock cap in seconds. Set 0 to disable.")
     p.add_argument("--early-stopping-patience", type=int, default=0,
                    help="Stop a trial after this many consecutive non-improving "
                         "validation epochs. 0 = off.")
     p.add_argument("--batch-size", type=int, default=32)
-    p.add_argument("--window-length", type=int, default=125,
-                   help="Latent frames per training window (125 ≈ 4 s @ 32 ms/frame)")
+    p.add_argument("--window-length", type=int, default=500,
+                   help="Recons EMG samples per training window (500 = 8 s @ 62.5 Hz)")
     p.add_argument("--seed", type=int, default=42,
                    help="Global random seed for reproducibility")
     return p.parse_args()
@@ -534,7 +459,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    # Resolve backward-compat aliases: explicit --coarse-* flags override --num-trials / --trial-epochs
     coarse_trials = args.coarse_trials if args.coarse_trials is not None else args.num_trials
     coarse_epochs = args.coarse_epochs if args.coarse_epochs is not None else args.trial_epochs
     timeout_secs  = float("inf") if args.trial_timeout == 0 else args.trial_timeout
@@ -542,15 +466,13 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if args.output is None:
-        _yaml_stem = f"best_hyperparams_{args.model}_latent"
+        _yaml_stem = f"best_hyperparams_{args.model}_recons_raw"
         args.output = Path(__file__).resolve().parent / "checkpoints" / f"{_yaml_stem}.yaml"
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    active_space = SEARCH_SPACE_CONFORMER if args.model == "conformer" else SEARCH_SPACE_RNN
-
-    session_paths    = get_latent_session_paths(data_root=args.data_root, config_path=args.config)
-    all_train_paths  = session_paths["train"]
-    val_paths        = session_paths["val"]
+    session_paths = get_recons_session_paths(data_root=args.data_root, config_path=args.config)
+    all_train_paths = session_paths["train"]
+    val_paths       = session_paths["val"]
 
     if args.trial_sessions > len(all_train_paths):
         raise ValueError(
@@ -558,16 +480,15 @@ def main() -> None:
             f"train sessions ({len(all_train_paths)})"
         )
     trial_train_paths = all_train_paths[: args.trial_sessions]
+    active_space = SEARCH_SPACE_CONFORMER if args.model == "conformer" else SEARCH_SPACE_RNN
 
     # ---- Startup banner ----
     print(f"Device            : {device}")
     print(f"Model             : {args.model}")
-    print(f"Pipeline          : latent (data_latent/, 256-dim)")
-    print(f"Data root         : {args.data_root}")
-    print(f"Train sessions    : {len(trial_train_paths)} / {len(all_train_paths)} (--trial-sessions cap)")
-    print(f"Val sessions      : {len(val_paths)}")
-    print(f"Window length     : {args.window_length} latent frames")
+    print(f"Pipeline          : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)")
     print(f"Search mode       : {args.search_mode}")
+    print(f"Train sessions    : {len(trial_train_paths)} / {len(all_train_paths)}")
+    print(f"Val sessions      : {len(val_paths)}")
     if args.search_mode == "two-phase":
         top_k_display = min(args.fine_top_k, coarse_trials)
         print(f"Coarse            : {coarse_trials} trials × {coarse_epochs} epochs")
@@ -601,7 +522,7 @@ def main() -> None:
         phase_label="C",
         num_trials=coarse_trials,
         search_space=active_space,
-        train_paths=trial_train_paths,
+        trial_train_paths=trial_train_paths,
         val_paths=val_paths,
         trial_epochs=coarse_epochs,
         window_length=args.window_length,
@@ -639,7 +560,7 @@ def main() -> None:
                 phase_label=label,
                 num_trials=args.fine_trials,
                 search_space=fine_space,
-                train_paths=trial_train_paths,
+                trial_train_paths=trial_train_paths,
                 val_paths=val_paths,
                 trial_epochs=args.fine_epochs,
                 window_length=args.window_length,
@@ -653,7 +574,6 @@ def main() -> None:
             )
             fine_results.extend(phase_results)
             fine_trial_offset += args.fine_trials
-            # If the phase was interrupted (_run_phase returned early), stop further anchors
             if len(phase_results) < args.fine_trials:
                 break
 
@@ -678,7 +598,6 @@ def main() -> None:
         print("=" * 62)
         _print_config_inline(best_config, args.model)
         print()
-        # Seed offset far from trial seeds to avoid correlation
         confirm_seed = 10_000 + best_global_idx
         t0 = time.perf_counter()
         try:
@@ -703,7 +622,7 @@ def main() -> None:
             f"  Confirmation CER={confirm_cer:.2f}%  "
             f"({elapsed:.1f}s, {confirm_epochs_run} epochs)"
         )
-        best_cer = confirm_cer  # Use confirmed CER in saved YAML
+        best_cer = confirm_cer
 
     # ---- Results table ----
     _print_results_table(all_results, args.model)
@@ -714,13 +633,13 @@ def main() -> None:
     )
 
     if math.isinf(best_cer):
-        print("All trials ran out of GPU memory — no YAML saved. "
-              "Try reducing --batch-size or the d_model/num_heads choices.")
+        print("All trials ran out of GPU memory — no YAML saved.")
         return
 
     # ---- Save YAML ----
     if args.model == "conformer":
         model_hp: dict[str, Any] = {
+            "proj_dim":         int(best_config["proj_dim"]),
             "d_model":          int(best_config["d_model"]),
             "num_heads":        int(best_config["num_heads"]),
             "num_layers":       int(best_config["num_layers"]),
@@ -729,6 +648,7 @@ def main() -> None:
         }
     else:
         model_hp = {
+            "proj_dim":    int(best_config["proj_dim"]),
             "hidden_size": int(best_config["hidden_size"]),
             "num_layers":  int(best_config["num_layers"]),
             "dropout":     float(best_config["dropout"]),
@@ -738,21 +658,19 @@ def main() -> None:
         "lr":           float(best_config["lr"]),
         "weight_decay": float(best_config["weight_decay"]),
         **model_hp,
-        # Metadata (ignored by train_latent.py, useful for auditing)
+        # Metadata
         "trial_val_cer":      round(float(best_cer), 4),
-        "data_root":          str(args.data_root),
-        "num_trial_sessions": args.trial_sessions,
-        "window_length":      args.window_length,
+        "pipeline":           "recons-raw",
         "search_mode":        args.search_mode,
         "search_phase_found": best_phase,
         "num_coarse_trials":  len(coarse_results),
         "num_fine_trials":    len(fine_results),
         "coarse_epochs":      coarse_epochs,
         "fine_epochs":        args.fine_epochs if args.search_mode == "two-phase" else None,
+        "num_trial_sessions": args.trial_sessions,
         "fine_shrink":        args.fine_shrink if args.search_mode == "two-phase" else None,
         "tuned_at":           datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    # Drop None values for a clean YAML in coarse-only mode
     output_data = {k: v for k, v in output_data.items() if v is not None}
 
     with open(args.output, "w") as f:
@@ -761,7 +679,7 @@ def main() -> None:
     print(f"\nBest hyperparameters saved to: {args.output}")
     print("\nTo train with these hyperparameters run:")
     print(
-        f"  .venv\\Scripts\\python.exe -m Playground_Kai.train_latent "
+        f"  .venv\\Scripts\\python.exe -m Playground_Kai.train_recons "
         f"--model {args.model} --from-hyperparams {args.output}"
     )
 

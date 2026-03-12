@@ -662,3 +662,155 @@ class LatentConformerEncoder(nn.Module):
 
         x = self.head(x)              # (T, N, num_classes)
         return F.log_softmax(x, dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# Recons raw-channel encoders  (no STFT — raw (T, N, 2, 16) input)
+# ---------------------------------------------------------------------------
+
+class ReconsRNNEncoder(nn.Module):
+    """Bidirectional LSTM encoder for raw reconstructed EMG (62.5 Hz).
+
+    Operates directly on raw reconstructed channels — no spectrogram.
+
+    Architecture::
+
+        LayerNorm(in_channels)               [per-band normalisation]
+        → per-band Linear(in_channels → proj_dim)
+        → LayerNorm(proj_dim)
+        → flatten bands → (T, N, 2 * proj_dim)
+        → BiLSTM (num_layers, hidden_size)
+        → Linear head → LogSoftmax
+
+    Input shape : ``(T, N, 2, in_channels)``
+    Output shape: ``(T, N, num_classes)``
+
+    Args:
+        in_channels: Electrode channels per band (default 16).
+        proj_dim: Feature dimension after per-band linear projection.
+        hidden_size: Hidden size per BiLSTM direction.
+        num_layers: Number of stacked BiLSTM layers.
+        dropout: Inter-layer dropout (disabled when num_layers == 1).
+    """
+
+    NUM_BANDS: int = 2
+
+    def __init__(
+        self,
+        in_channels: int = 16,
+        proj_dim: int = 128,
+        hidden_size: int = 512,
+        num_layers: int = 2,
+        dropout: float = 0.2,
+    ) -> None:
+        super().__init__()
+        self.input_norm = nn.LayerNorm(in_channels)
+        self.proj       = nn.Linear(in_channels, proj_dim)
+        self.proj_norm  = nn.LayerNorm(proj_dim)
+        rnn_in = self.NUM_BANDS * proj_dim
+        self.rnn = nn.LSTM(
+            input_size=rnn_in,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            bidirectional=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+            batch_first=False,
+        )
+        self.head = nn.Linear(2 * hidden_size, charset().num_classes)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """Args:
+            inputs: ``(T, N, 2, in_channels)`` raw EMG tensor.
+        Returns:
+            ``(T, N, num_classes)`` log-softmax activations.
+        """
+        x = self.input_norm(inputs)       # (T, N, 2, in_channels)
+        x = self.proj(x)                  # (T, N, 2, proj_dim)
+        x = self.proj_norm(x)             # (T, N, 2, proj_dim)
+        x = x.flatten(start_dim=2)        # (T, N, 2 * proj_dim)
+        x = x.contiguous()
+        x, _ = self.rnn(x)                # (T, N, 2 * hidden_size)
+        x = self.head(x)                  # (T, N, num_classes)
+        return F.log_softmax(x, dim=-1)
+
+
+class ReconsConformerEncoder(nn.Module):
+    """RPE-Conformer encoder for raw reconstructed EMG (62.5 Hz).
+
+    Operates directly on raw reconstructed channels — no spectrogram.
+
+    Architecture::
+
+        LayerNorm(in_channels)               [per-band normalisation]
+        → per-band Linear(in_channels → proj_dim)
+        → LayerNorm(proj_dim)
+        → flatten bands → (T, N, 2 * proj_dim)
+        → Linear(2 * proj_dim → d_model)
+        → RPEConformerBlocks (num_layers)
+        → Linear head → LogSoftmax
+
+    Input shape : ``(T, N, 2, in_channels)``
+    Output shape: ``(T, N, num_classes)``
+
+    Args:
+        in_channels: Electrode channels per band (default 16).
+        proj_dim: Feature dimension after per-band linear projection.
+        d_model: Feature dimension throughout all Conformer blocks.
+        num_heads: Number of attention heads; must evenly divide d_model.
+        num_layers: Number of stacked Conformer blocks.
+        conv_kernel_size: Depthwise conv kernel size (must be odd).
+        dropout: Dropout probability used across all sub-modules.
+    """
+
+    NUM_BANDS: int = 2
+
+    def __init__(
+        self,
+        in_channels: int = 16,
+        proj_dim: int = 128,
+        d_model: int = 256,
+        num_heads: int = 4,
+        num_layers: int = 4,
+        conv_kernel_size: int = 31,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        assert d_model % num_heads == 0, (
+            f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
+        )
+        self.input_norm = nn.LayerNorm(in_channels)
+        self.proj       = nn.Linear(in_channels, proj_dim)
+        self.proj_norm  = nn.LayerNorm(proj_dim)
+        rnn_in = self.NUM_BANDS * proj_dim
+        self.input_proj = nn.Linear(rnn_in, d_model)
+        self.layers = nn.ModuleList([
+            RPEConformerBlock(
+                d_model=d_model,
+                num_heads=num_heads,
+                ffn_dim=4 * d_model,
+                conv_kernel_size=conv_kernel_size,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+        self.head = nn.Linear(d_model, charset().num_classes)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """Args:
+            inputs: ``(T, N, 2, in_channels)`` raw EMG tensor.
+        Returns:
+            ``(T, N, num_classes)`` log-softmax activations.
+        """
+        x = self.input_norm(inputs)       # (T, N, 2, in_channels)
+        x = self.proj(x)                  # (T, N, 2, proj_dim)
+        x = self.proj_norm(x)             # (T, N, 2, proj_dim)
+        x = x.flatten(start_dim=2)        # (T, N, 2 * proj_dim)
+        x = self.input_proj(x)            # (T, N, d_model)
+        T, N = x.shape[0], x.shape[1]
+        rel_pe = _rel_sinusoidal_pe(T, x.shape[2], x.device)  # (2T-1, d_model)
+        x = x.transpose(0, 1)             # (N, T, d_model)
+        for layer in self.layers:
+            x = layer(x, rel_pe)
+        x = x.transpose(0, 1)             # (T, N, d_model)
+        x = self.head(x)                  # (T, N, num_classes)
+        return F.log_softmax(x, dim=-1)

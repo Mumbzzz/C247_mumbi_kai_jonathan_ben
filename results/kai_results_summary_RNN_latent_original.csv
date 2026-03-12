@@ -1,0 +1,2 @@
+run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
+RNN_32ch_62.5hz_89pct_20260312_035409,2026-03-12 07:27:56,RNN,150,32,62.5,0.8860671822694217,latent,0.2216629942879081,69.3117915562221,824.2079428826416,161.2565445026178,12812.926291899988,latent

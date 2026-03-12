@@ -1,0 +1,19 @@
+lr: 0.0004359400788954502
+weight_decay: 0.022563110735889107
+proj_dim: 64
+d_model: 256
+num_heads: 4
+num_layers: 2
+conv_kernel_size: 15
+dropout: 0.29458848566560497
+trial_val_cer: 100.0
+pipeline: recons-raw
+search_mode: two-phase
+search_phase_found: C
+num_coarse_trials: 2
+num_fine_trials: 0
+coarse_epochs: 6
+fine_epochs: 6
+num_trial_sessions: 8
+fine_shrink: 3.0
+tuned_at: '2026-03-12 14:29:09'

@@ -152,10 +152,10 @@ def get_latent_session_paths(
     """Parse single_user.yaml and return the latent HDF5 paths for each split.
 
     Identical to :func:`get_session_paths` but builds paths with the
-    ``_latent.hdf5`` suffix used by the ``data_latent/`` folder.
+    ``_recons_v3.hdf5`` suffix used by the ``data_latent/`` folder.
 
     Args:
-        data_root: Directory containing the ``*_500hz.hdf5`` latent files.
+        data_root: Directory containing the ``*_recons_v3.hdf5`` latent files.
         config_path: Path to ``config/user/single_user.yaml``.
 
     Returns:
@@ -174,9 +174,46 @@ def get_latent_session_paths(
         paths: list[Path] = []
         for entry in entries:
             session = entry["session"]
-            hdf5_path = data_root / f"{session}_latent.hdf5"
+            hdf5_path = data_root / f"{session}_recons_v3.hdf5"
             if not hdf5_path.exists():
                 raise FileNotFoundError(f"Latent HDF5 file not found: {hdf5_path}")
+            paths.append(hdf5_path)
+        result[split] = paths
+    return result
+
+
+def get_recons_session_paths(
+    data_root: Path,
+    config_path: Path,
+) -> dict[str, list[Path]]:
+    """Parse single_user.yaml and return the recons HDF5 paths for each split.
+
+    Identical to :func:`get_session_paths` but builds paths with the
+    ``_recons_v3.hdf5`` suffix used by the ``data_recons/`` folder.
+
+    Args:
+        data_root: Directory containing the ``*_recons_v3.hdf5`` recons files.
+        config_path: Path to ``config/user/single_user.yaml``.
+
+    Returns:
+        Dict with keys ``'train'``, ``'val'``, ``'test'`` mapping to lists of
+        resolved :class:`pathlib.Path` objects pointing to recons HDF5 files.
+
+    Raises:
+        FileNotFoundError: If a session file referenced in the YAML is missing.
+    """
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+
+    result: dict[str, list[Path]] = {}
+    for split in ("train", "val", "test"):
+        entries = cfg["dataset"].get(split, [])
+        paths: list[Path] = []
+        for entry in entries:
+            session = entry["session"]
+            hdf5_path = data_root / f"{session}_recons_v3.hdf5"
+            if not hdf5_path.exists():
+                raise FileNotFoundError(f"Recons HDF5 file not found: {hdf5_path}")
             paths.append(hdf5_path)
         result[split] = paths
     return result
@@ -197,6 +234,7 @@ def get_dataloaders(
     test_window_length: Optional[int] = None,
     preprocess: bool = False,
     channel_half: bool = False,
+    recons: bool = False,
 ) -> dict[str, DataLoader]:
     """Build train/val/test DataLoaders from the single_user split config.
 
@@ -217,12 +255,17 @@ def get_dataloaders(
         batch_size: Batch size for train and val loaders.  Test always uses 1.
         num_workers: DataLoader worker processes.  Use ``0`` (the default) to
             keep everything in the main process — safest on Windows.
+        recons: If True, resolve session paths from ``data_recons/`` using the
+            ``*_recons_v3.hdf5`` suffix instead of the standard ``*.hdf5`` naming.
 
     Returns:
         Dict with keys ``'train'``, ``'val'``, ``'test'`` mapping to
         :class:`torch.utils.data.DataLoader` instances.
     """
-    session_paths = get_session_paths(data_root=data_root, config_path=config_path)
+    if recons:
+        session_paths = get_recons_session_paths(data_root=data_root, config_path=config_path)
+    else:
+        session_paths = get_session_paths(data_root=data_root, config_path=config_path)
     if preprocess:
         train_transform = build_preprocess_transform(augment=True)
         eval_transform  = build_preprocess_transform(augment=False)
@@ -318,7 +361,7 @@ class LatentEMGDataset(torch.utils.data.Dataset):
     ``WindowedEMGDataset.collate``.
 
     Args:
-        hdf5_path: Path to the latent HDF5 file (e.g. ``data_latent/*_latent.hdf5``).
+        hdf5_path: Path to the latent HDF5 file (e.g. ``data_latent/*_recons_v3.hdf5``).
         window_length: Number of latent frames per sample (default 125 ≈ 4 s
             at 32 ms/frame).
         stride: Latent-frame stride between consecutive windows. Defaults to
@@ -510,7 +553,7 @@ def get_latent_dataloaders(
     :class:`LatentEMGDataset` instances per split.
 
     Args:
-        data_root: Directory containing the ``*_latent.hdf5`` latent files
+        data_root: Directory containing the ``*_recons_v3.hdf5`` latent files
             (typically ``data_latent/``).
         config_path: Path to ``config/user/single_user.yaml``.
         window_length: Latent frames per sample (default 125 ≈ 4 s at 32 ms/frame).
@@ -713,4 +756,227 @@ def build_loaders_from_paths(
             pin_memory=True,
             persistent_workers=persistent,
         ),
+    }
+
+
+# ===========================================================================
+# Recons raw-channel dataset helpers
+# (for data_recons/*_recons_v3.hdf5 — reconstructed EMG at 62.5 Hz)
+# Internal HDF5 structure:
+#   emg2qwerty/                   GROUP  attrs=[keystrokes, recons_rate_hz]
+#   emg2qwerty/timeseries/        GROUP
+#   emg2qwerty/timeseries/time    DATASET (N,) float64
+#   emg2qwerty/timeseries/emg_left  DATASET (N, 16) float32
+#   emg2qwerty/timeseries/emg_right DATASET (N, 16) float32
+# ===========================================================================
+
+
+class ReconsRawDataset(torch.utils.data.Dataset):
+    """Windowed dataset over reconstructed EMG (*_recons_v3.hdf5) files.
+
+    Returns raw EMG tensors of shape ``(W, 2, 16)`` — no transform or STFT.
+    Left and right wrist channels are stacked along dim 1.
+
+    Args:
+        hdf5_path:     Path to a ``*_recons_v3.hdf5`` file.
+        window_length: Samples per window.  ``None`` → whole session.
+        stride:        Stride between windows; defaults to ``window_length``.
+        padding:       ``(left, right)`` contextual samples prepended/appended.
+        jitter:        Randomly shift window offset (training augmentation).
+    """
+
+    def __init__(
+        self,
+        hdf5_path: Path,
+        window_length: Optional[int] = None,
+        stride: Optional[int] = None,
+        padding: tuple[int, int] = (10, 2),
+        jitter: bool = False,
+    ) -> None:
+        self.hdf5_path = hdf5_path
+        self.jitter = jitter
+        self.left_padding, self.right_padding = padding
+
+        with h5py.File(hdf5_path, "r") as f:
+            grp = f["emg2qwerty"]
+            self.session_length: int = grp["timeseries/emg_left"].shape[0]
+            self.keystrokes: list = json.loads(grp.attrs.get("keystrokes", "[]"))
+
+        self.window_length = window_length if window_length is not None else self.session_length
+        self.stride = stride if stride is not None else self.window_length
+        assert self.window_length > 0 and self.stride > 0
+
+        # Lazy file handle — opened in __getitem__ so the dataset is picklable.
+        self._file = None
+
+    def _ensure_open(self) -> None:
+        if self._file is None:
+            self._file = h5py.File(self.hdf5_path, "r")
+
+    def __len__(self) -> int:
+        return int(max(self.session_length - self.window_length, 0) // self.stride + 1)
+
+    def __getitem__(self, idx: int):
+        import numpy as np
+        from emg2qwerty.data import LabelData
+
+        self._ensure_open()
+        ts_grp = self._file["emg2qwerty/timeseries"]
+
+        offset = idx * self.stride
+
+        leftover = self.session_length - (offset + self.window_length)
+        if leftover < 0:
+            raise IndexError(f"Index {idx} out of bounds")
+        if leftover > 0 and self.jitter:
+            offset += int(np.random.randint(0, min(self.stride, leftover)))
+
+        window_start = max(offset - self.left_padding, 0)
+        window_end = min(offset + self.window_length + self.right_padding, self.session_length)
+
+        emg_left  = ts_grp["emg_left"][window_start:window_end]   # (W, 16) float32
+        emg_right = ts_grp["emg_right"][window_start:window_end]  # (W, 16) float32
+        times     = ts_grp["time"][window_start:window_end]        # (W,) float64
+
+        # Stack into (W, 2, 16) — no STFT, no transform.
+        emg_tensor = torch.stack([
+            torch.from_numpy(np.asarray(emg_left)),
+            torch.from_numpy(np.asarray(emg_right)),
+        ], dim=1)  # (W, 2, 16)
+
+        # Extract labels for the un-padded window span.
+        start_t = float(times[offset - window_start])
+        end_t   = float(times[(offset + self.window_length - 1) - window_start])
+        label_data = LabelData.from_keystrokes(self.keystrokes, start_t, end_t)
+        labels = torch.as_tensor(label_data.labels)
+
+        return emg_tensor, labels
+
+    collate = staticmethod(WindowedEMGDataset.collate)
+
+
+def build_recons_loaders_from_paths(
+    train_paths: list[Path],
+    val_paths: list[Path],
+    window_length: int = 500,
+    stride: Optional[int] = None,
+    padding: tuple[int, int] = (10, 2),
+    batch_size: int = 32,
+    num_workers: int = 0,
+) -> dict[str, DataLoader]:
+    """Build train and val DataLoaders from explicit recons session path lists.
+
+    Uses :class:`ReconsRawDataset` — raw ``(W, 2, 16)`` tensors, no STFT.
+    Used by :mod:`Playground_Kai.hyperparam_tuner_recons` for proxy trials.
+
+    Args:
+        train_paths:   ``*_recons_v3.hdf5`` paths for training.
+        val_paths:     ``*_recons_v3.hdf5`` paths for validation.
+        window_length: Samples per window (default 500 ≈ 8 s at 62.5 Hz).
+        stride:        Stride between windows; defaults to ``window_length``.
+        padding:       ``(left, right)`` contextual samples per window.
+        batch_size:    Batch size for both loaders.
+        num_workers:   DataLoader worker processes.
+
+    Returns:
+        Dict with keys ``'train'`` and ``'val'`` mapping to DataLoaders.
+    """
+    train_dataset = ConcatDataset([
+        ReconsRawDataset(p, window_length=window_length, stride=stride,
+                         padding=padding, jitter=True)
+        for p in train_paths
+    ])
+    val_dataset = ConcatDataset([
+        ReconsRawDataset(p, window_length=window_length, stride=None,
+                         padding=padding, jitter=False)
+        for p in val_paths
+    ])
+
+    persistent = num_workers > 0
+    return {
+        "train": DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            collate_fn=WindowedEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+        "val": DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=WindowedEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+    }
+
+
+def get_recons_dataloaders(
+    data_root: Path,
+    config_path: Path,
+    window_length: int = 500,
+    stride: Optional[int] = None,
+    padding: tuple[int, int] = (10, 2),
+    batch_size: int = 32,
+    num_workers: int = 0,
+    test_window_length: Optional[int] = None,
+) -> dict[str, DataLoader]:
+    """Build train/val/test DataLoaders from the single_user split config for recons files.
+
+    Uses :class:`ReconsRawDataset` — raw ``(W, 2, 16)`` tensors, no STFT.
+
+    Args:
+        data_root:    Directory containing ``*_recons_v3.hdf5`` files.
+        config_path:  Path to ``config/user/single_user.yaml``.
+        window_length: Samples per training window (default 500 ≈ 8 s @ 62.5 Hz).
+        stride:       Stride between windows; defaults to ``window_length``.
+        padding:      ``(left, right)`` contextual samples per window.
+        batch_size:   Batch size for train/val.  Test always uses 1.
+        num_workers:  DataLoader workers.
+        test_window_length: If set, test uses this window length instead.
+
+    Returns:
+        Dict with keys ``'train'``, ``'val'``, ``'test'`` → DataLoaders.
+    """
+    session_paths = get_recons_session_paths(data_root=data_root, config_path=config_path)
+    _test_window = test_window_length if test_window_length is not None else window_length
+
+    train_dataset = ConcatDataset([
+        ReconsRawDataset(p, window_length=window_length, stride=stride,
+                         padding=padding, jitter=True)
+        for p in session_paths["train"]
+    ])
+    val_dataset = ConcatDataset([
+        ReconsRawDataset(p, window_length=window_length, stride=None,
+                         padding=padding, jitter=False)
+        for p in session_paths["val"]
+    ])
+    test_dataset = ConcatDataset([
+        ReconsRawDataset(p, window_length=_test_window, stride=None,
+                         padding=padding, jitter=False)
+        for p in session_paths["test"]
+    ])
+
+    print(
+        f"Recons raw dataset"
+        f" | train: {len(session_paths['train'])} sessions ({len(train_dataset)} windows)"
+        f" | val: {len(session_paths['val'])} sessions ({len(val_dataset)} windows)"
+        f" | test: {len(session_paths['test'])} sessions ({len(test_dataset)} windows)"
+    )
+
+    persistent = num_workers > 0
+    return {
+        "train": DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                            num_workers=num_workers, collate_fn=WindowedEMGDataset.collate,
+                            pin_memory=True, persistent_workers=persistent),
+        "val":   DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                            num_workers=num_workers, collate_fn=WindowedEMGDataset.collate,
+                            pin_memory=True, persistent_workers=persistent),
+        "test":  DataLoader(test_dataset, batch_size=1, shuffle=False,
+                            num_workers=num_workers, collate_fn=WindowedEMGDataset.collate,
+                            pin_memory=True, persistent_workers=persistent),
     }
