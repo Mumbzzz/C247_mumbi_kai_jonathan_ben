@@ -1,7 +1,7 @@
 """Hyperparameter tuner for the latent-space EMG-to-keystroke RNN/Conformer model.
 
-Operates on pre-computed AE latent vectors stored in ``emg_latent_ae_v2.hdf5``
-(shape: N_frames × 1024 float32, at 32 ms / frame).  The SpectrogramNorm /
+Operates on pre-computed AE latent vectors stored in ``data_latent/*_latent.hdf5``
+(shape: N_frames × 256 float32).  The SpectrogramNorm /
 MultiBandRotationInvariantMLP front-end used in the raw-EMG pipeline is
 replaced by a single ``nn.Linear(1024, d_model)`` projection layer; all other
 training logic (CTC loss, LR schedule, greedy decoding) is identical.
@@ -65,7 +65,7 @@ if str(_ROOT) not in sys.path:
 from emg2qwerty.charset import charset
 from emg2qwerty.decoder import CTCGreedyDecoder
 
-from Playground_Kai.data_utils import get_latent_dataloaders
+from Playground_Kai.data_utils import get_latent_session_paths, build_latent_loaders_from_paths
 from Playground_Kai.model import LatentRNNEncoder, LatentConformerEncoder
 
 # torch 2.5+ renamed the CUDA OOM exception to torch.AcceleratorError.
@@ -76,8 +76,8 @@ if hasattr(torch, "AcceleratorError"):
 
 from Playground_Kai.train_latent import _lr_lambda, evaluate, train_one_epoch
 
-# Fixed latent dimension — defined by the autoencoder
-LATENT_DIM: int = 1024
+# Fixed latent dimension — defined by the autoencoder (256 for current _latent.hdf5 files)
+LATENT_DIM: int = 256
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +167,8 @@ def make_fine_search_space(
 def run_trial(
     trial_idx: int,
     config: dict[str, Any],
-    hdf5_path: Path,
+    train_paths: list[Path],
+    val_paths: list[Path],
     trial_epochs: int,
     window_length: int,
     batch_size: int,
@@ -181,7 +182,8 @@ def run_trial(
     Args:
         trial_idx: Seed for deterministic weight initialisation.
         config: Hyperparameter dict sampled from the active search space.
-        hdf5_path: Path to the latent HDF5 file (``emg_latent_ae_v2.hdf5``).
+        train_paths: Latent HDF5 paths used for proxy training.
+        val_paths: Latent HDF5 paths used for validation.
         trial_epochs: Maximum training epochs.
         window_length: Latent frames per window (default 125 ≈ 4 s @ 32 ms/frame).
         batch_size: Batch size.
@@ -197,8 +199,9 @@ def run_trial(
     """
     torch.manual_seed(trial_idx)
 
-    loaders = get_latent_dataloaders(
-        hdf5_path=hdf5_path,
+    loaders = build_latent_loaders_from_paths(
+        train_paths=train_paths,
+        val_paths=val_paths,
         window_length=window_length,
         batch_size=batch_size,
         num_workers=0,
@@ -338,7 +341,8 @@ def _run_phase(
     phase_label: str,
     num_trials: int,
     search_space: dict[str, dict[str, Any]],
-    hdf5_path: Path,
+    train_paths: list[Path],
+    val_paths: list[Path],
     trial_epochs: int,
     window_length: int,
     batch_size: int,
@@ -377,7 +381,8 @@ def _run_phase(
             val_cer, timed_out, epochs_run = run_trial(
                 trial_idx=global_idx,
                 config=config,
-                hdf5_path=hdf5_path,
+                train_paths=train_paths,
+                val_paths=val_paths,
                 trial_epochs=trial_epochs,
                 window_length=window_length,
                 batch_size=batch_size,
@@ -467,12 +472,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", choices=["rnn", "conformer"], default="rnn",
                    help="Model architecture to tune")
     # --- Data ---
-    p.add_argument("--hdf5-path", type=Path,
-                   default=_ROOT / "data" / "emg_latent_ae_v2.hdf5",
-                   help="Path to the latent EMG HDF5 file")
+    p.add_argument("--data-root", type=Path,
+                   default=_ROOT / "data_latent",
+                   help="Directory containing *_500hz.hdf5 latent session files")
+    p.add_argument("--config", type=Path,
+                   default=_ROOT / "config" / "user" / "single_user.yaml",
+                   help="Path to the train/val/test split YAML")
     p.add_argument("--output", type=Path, default=None,
                    help="Where to write the best hyperparameters YAML "
                         "(default: checkpoints/best_hyperparams_{model}_latent.yaml)")
+    p.add_argument("--trial-sessions", type=int, default=5,
+                   help="Training sessions per trial (first N from split YAML)")
     # --- Search mode ---
     p.add_argument("--search-mode", choices=["two-phase", "coarse-only"],
                    default="two-phase",
@@ -538,12 +548,25 @@ def main() -> None:
 
     active_space = SEARCH_SPACE_CONFORMER if args.model == "conformer" else SEARCH_SPACE_RNN
 
+    session_paths    = get_latent_session_paths(data_root=args.data_root, config_path=args.config)
+    all_train_paths  = session_paths["train"]
+    val_paths        = session_paths["val"]
+
+    if args.trial_sessions > len(all_train_paths):
+        raise ValueError(
+            f"--trial-sessions={args.trial_sessions} exceeds available "
+            f"train sessions ({len(all_train_paths)})"
+        )
+    trial_train_paths = all_train_paths[: args.trial_sessions]
+
     # ---- Startup banner ----
     print(f"Device            : {device}")
     print(f"Model             : {args.model}")
-    print(f"Pipeline          : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)")
-    print(f"HDF5              : {args.hdf5_path}")
-    print(f"Window length     : {args.window_length} latent frames (≈ {args.window_length * 32 / 1000:.1f}s)")
+    print(f"Pipeline          : latent (data_latent/, 256-dim)")
+    print(f"Data root         : {args.data_root}")
+    print(f"Train sessions    : {len(trial_train_paths)} / {len(all_train_paths)} (--trial-sessions cap)")
+    print(f"Val sessions      : {len(val_paths)}")
+    print(f"Window length     : {args.window_length} latent frames")
     print(f"Search mode       : {args.search_mode}")
     if args.search_mode == "two-phase":
         top_k_display = min(args.fine_top_k, coarse_trials)
@@ -578,7 +601,8 @@ def main() -> None:
         phase_label="C",
         num_trials=coarse_trials,
         search_space=active_space,
-        hdf5_path=args.hdf5_path,
+        train_paths=trial_train_paths,
+        val_paths=val_paths,
         trial_epochs=coarse_epochs,
         window_length=args.window_length,
         batch_size=args.batch_size,
@@ -615,7 +639,8 @@ def main() -> None:
                 phase_label=label,
                 num_trials=args.fine_trials,
                 search_space=fine_space,
-                hdf5_path=args.hdf5_path,
+                train_paths=trial_train_paths,
+                val_paths=val_paths,
                 trial_epochs=args.fine_epochs,
                 window_length=args.window_length,
                 batch_size=args.batch_size,
@@ -660,7 +685,8 @@ def main() -> None:
             confirm_cer, _, confirm_epochs_run = run_trial(
                 trial_idx=confirm_seed,
                 config=best_config,
-                hdf5_path=args.hdf5_path,
+                train_paths=trial_train_paths,
+                val_paths=val_paths,
                 trial_epochs=args.confirm_epochs,
                 window_length=args.window_length,
                 batch_size=args.batch_size,
@@ -714,7 +740,8 @@ def main() -> None:
         **model_hp,
         # Metadata (ignored by train_latent.py, useful for auditing)
         "trial_val_cer":      round(float(best_cer), 4),
-        "hdf5_path":          str(args.hdf5_path),
+        "data_root":          str(args.data_root),
+        "num_trial_sessions": args.trial_sessions,
         "window_length":      args.window_length,
         "search_mode":        args.search_mode,
         "search_phase_found": best_phase,

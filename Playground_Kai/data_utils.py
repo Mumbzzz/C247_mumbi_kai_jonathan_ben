@@ -145,6 +145,43 @@ def get_session_paths(
     return result
 
 
+def get_latent_session_paths(
+    data_root: Path,
+    config_path: Path,
+) -> dict[str, list[Path]]:
+    """Parse single_user.yaml and return the latent HDF5 paths for each split.
+
+    Identical to :func:`get_session_paths` but builds paths with the
+    ``_latent.hdf5`` suffix used by the ``data_latent/`` folder.
+
+    Args:
+        data_root: Directory containing the ``*_500hz.hdf5`` latent files.
+        config_path: Path to ``config/user/single_user.yaml``.
+
+    Returns:
+        Dict with keys ``'train'``, ``'val'``, ``'test'`` mapping to lists of
+        resolved :class:`pathlib.Path` objects pointing to latent HDF5 files.
+
+    Raises:
+        FileNotFoundError: If a session file referenced in the YAML is missing.
+    """
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+
+    result: dict[str, list[Path]] = {}
+    for split in ("train", "val", "test"):
+        entries = cfg["dataset"].get(split, [])
+        paths: list[Path] = []
+        for entry in entries:
+            session = entry["session"]
+            hdf5_path = data_root / f"{session}_latent.hdf5"
+            if not hdf5_path.exists():
+                raise FileNotFoundError(f"Latent HDF5 file not found: {hdf5_path}")
+            paths.append(hdf5_path)
+        result[split] = paths
+    return result
+
+
 # ---------------------------------------------------------------------------
 # DataLoader factory
 # ---------------------------------------------------------------------------
@@ -274,14 +311,14 @@ import json   # noqa: E402
 class LatentEMGDataset(torch.utils.data.Dataset):
     """Windowed dataset over pre-computed latent EMG vectors.
 
-    Reads ``emg2qwerty/latent`` (N_frames × 1024 float32) and
-    ``emg2qwerty/time`` (N_frames float64) from a v2 latent HDF5 file,
+    Reads ``emg2qwerty/latent`` (N_frames × 256 float32) and
+    ``emg2qwerty/time`` (N_frames float64) from a latent HDF5 file,
     extracts keystroke labels from the ``keystrokes`` group attribute, and
     yields ``(latent_window, labels)`` tuples compatible with
     ``WindowedEMGDataset.collate``.
 
     Args:
-        hdf5_path: Path to the latent HDF5 file (e.g. ``emg_latent_ae_v2.hdf5``).
+        hdf5_path: Path to the latent HDF5 file (e.g. ``data_latent/*_latent.hdf5``).
         window_length: Number of latent frames per sample (default 125 ≈ 4 s
             at 32 ms/frame).
         stride: Latent-frame stride between consecutive windows. Defaults to
@@ -369,22 +406,22 @@ class LatentEMGDataset(torch.utils.data.Dataset):
     collate = staticmethod(WindowedEMGDataset.collate)
 
 
-def get_latent_dataloaders(
+def get_latent_dataloaders_single(
     hdf5_path: Path,
     window_length: int = 125,
     stride: Optional[int] = None,
     batch_size: int = 32,
     num_workers: int = 0,
 ) -> dict[str, DataLoader]:
-    """Build train / val / test DataLoaders for a single latent HDF5 file.
+    """Build train / val / test DataLoaders for a **single** latent HDF5 file.
 
     Splits the session temporally: 70 % train → 15 % val → 15 % test.
-    All splits use windowed loading with the same ``window_length``.
+    Used by :mod:`Playground_Kai.hyperparam_tuner_latent` for lightweight
+    proxy trials on a single session.
 
     .. note::
-        This is a **proof-of-concept single-file split**.  When the full
-        16-session latent dataset is ready, replace only this function's body
-        (keep the signature intact) — ``train_latent.py`` stays unchanged.
+        For full multi-session training use :func:`get_latent_dataloaders`
+        which reads the train/val/test split from ``single_user.yaml``.
 
     Args:
         hdf5_path: Path to ``emg_latent_ae_v2.hdf5`` (or equivalent).
@@ -455,6 +492,146 @@ def get_latent_dataloaders(
             persistent_workers=persistent,
         ),
     }
+
+
+def get_latent_dataloaders(
+    data_root: Path,
+    config_path: Path,
+    window_length: int = 125,
+    stride: Optional[int] = None,
+    batch_size: int = 32,
+    num_workers: int = 0,
+) -> dict[str, DataLoader]:
+    """Build train / val / test DataLoaders from the single_user YAML split.
+
+    Reads ``config/user/single_user.yaml`` to resolve train/val/test session
+    lists, maps each session name to ``data_root/{session}_500hz.hdf5``, and
+    builds a :class:`~torch.utils.data.ConcatDataset` of
+    :class:`LatentEMGDataset` instances per split.
+
+    Args:
+        data_root: Directory containing the ``*_latent.hdf5`` latent files
+            (typically ``data_latent/``).
+        config_path: Path to ``config/user/single_user.yaml``.
+        window_length: Latent frames per sample (default 125 ≈ 4 s at 32 ms/frame).
+        stride: Stride between windows; defaults to ``window_length``.
+        batch_size: Batch size for train and val. Test always uses batch_size=1.
+        num_workers: DataLoader workers (0 = main process, safest on Windows).
+
+    Returns:
+        Dict with keys ``'train'``, ``'val'``, ``'test'`` → :class:`DataLoader`.
+    """
+    session_paths = get_latent_session_paths(data_root=data_root, config_path=config_path)
+
+    train_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=True)
+        for p in session_paths["train"]
+    ])
+    val_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=False)
+        for p in session_paths["val"]
+    ])
+    test_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=False)
+        for p in session_paths["test"]
+    ])
+
+    print(
+        f"Latent multi-session split"
+        f" | train: {len(session_paths['train'])} sessions ({len(train_dataset)} windows)"
+        f" | val: {len(session_paths['val'])} sessions ({len(val_dataset)} windows)"
+        f" | test: {len(session_paths['test'])} sessions ({len(test_dataset)} windows)"
+    )
+
+    persistent = num_workers > 0
+    return {
+        "train": DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+        "val": DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+        "test": DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+    }
+
+
+def build_latent_loaders_from_paths(
+    train_paths: list[Path],
+    val_paths: list[Path],
+    window_length: int = 125,
+    stride: Optional[int] = None,
+    batch_size: int = 32,
+    num_workers: int = 0,
+) -> dict[str, DataLoader]:
+    """Build train and val DataLoaders from explicit latent session path lists.
+
+    Lighter-weight alternative to :func:`get_latent_dataloaders` that accepts
+    path lists directly instead of reading from a YAML split file.  Used by
+    :mod:`Playground_Kai.hyperparam_tuner_latent` to run proxy training on
+    subsets of sessions.
+
+    Args:
+        train_paths: Latent HDF5 paths to use for training.
+        val_paths: Latent HDF5 paths to use for validation.
+        window_length: Latent frames per sample (default 125 ≈ 4 s at 32 ms/frame).
+        stride: Stride between windows; defaults to ``window_length``.
+        batch_size: Batch size for both train and val loaders.
+        num_workers: DataLoader worker processes.
+
+    Returns:
+        Dict with keys ``'train'`` and ``'val'`` mapping to DataLoaders.
+    """
+    train_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=True)
+        for p in train_paths
+    ])
+    val_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=False)
+        for p in val_paths
+    ])
+
+    persistent = num_workers > 0
+    return {
+        "train": DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+        "val": DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=LatentEMGDataset.collate,
+            pin_memory=True,
+            persistent_workers=persistent,
+        ),
+    }
+
 
 def build_loaders_from_paths(
     train_paths: list[Path],

@@ -652,3 +652,162 @@ Total train time: 00:05:34 (334.6s)
   Test DER         : 1.55%
   Test SER         : 37.46%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260310_1231hrs
+Model           : rnn (latent)
+Pipeline        : latent (emg_latent_ae_v2, 1024-dim @ 32ms/frame)
+HDF5            : D:\C247_mumbikaijonathanben\data\emg_latent_ae_v2.hdf5
+Device          : cuda
+Parameters      : 10,388,835
+Epochs planned  : 1000  |  Epochs completed: 1000
+Total train time: 00:37:20 (2240.6s)
+--- Hyperparameters ---
+  lr=0.0009121538100392627
+  weight_decay=0.02675748974000807
+  hidden_size=768
+  num_layers=1
+  dropout=0.3501168209111508
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 70.47%
+  Test CER         : 72.25%
+  Test IER         : 44.79%
+  Test DER         : 1.13%
+  Test SER         : 26.34%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260311_2044hrs
+Model           : rnn (latent)
+Pipeline        : latent (data_latent/, 1024-dim @ 32ms/frame, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 11,849,571
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:02:16 (136.1s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  hidden_size=512
+  num_layers=2
+  dropout=0.2
+  batch_size=8
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 461.00%
+  Test CER         : 127.68%
+  Test IER         : 82.35%
+  Test DER         : 28.84%
+  Test SER         : 16.49%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260311_2047hrs
+Model           : rnn (latent)
+Pipeline        : latent (data_latent/, 1024-dim @ 32ms/frame, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 11,849,571
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:02:16 (136.1s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  hidden_size=512
+  num_layers=2
+  dropout=0.2
+  batch_size=8
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 387.66%
+  Test CER         : 111.78%
+  Test IER         : 92.17%
+  Test DER         : 12.50%
+  Test SER         : 7.11%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260311_2049hrs
+Model           : conformer (latent)
+Pipeline        : latent (data_latent/, 1024-dim @ 32ms/frame, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 3,269,219
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:02:24 (144.9s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.2
+  batch_size=4
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 99.98%
+  Test CER         : 99.98%
+  Test IER         : 99.98%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260311_2052hrs
+Model           : conformer (latent)
+Pipeline        : latent (data_latent/, 1024-dim @ 32ms/frame, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 3,269,219
+Epochs planned  : 1  |  Epochs completed: 1
+Total train time: 00:02:21 (141.0s)
+--- Hyperparameters ---
+  lr=0.0005
+  weight_decay=0.01
+  d_model=256
+  num_heads=4
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.2
+  batch_size=4
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 101.03%
+  Test CER         : 100.00%
+  Test IER         : 100.00%
+  Test DER         : 0.00%
+  Test SER         : 0.00%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260311_2058hrs
+Model           : rnn (latent)
+Pipeline        : latent (data_latent/, 256-dim, single_user.yaml split)
+Data root       : D:\C247_mumbikaijonathanben\data_latent
+Config          : D:\C247_mumbikaijonathanben\config\user\single_user.yaml
+Device          : cuda
+Parameters      : 5,503,331
+Epochs planned  : 10  |  Epochs completed: 2
+Total train time: 00:01:35 (95.6s)
+--- Hyperparameters ---
+  lr=0.0004359400788954502
+  weight_decay=0.002795255278750788
+  hidden_size=256
+  num_layers=3
+  dropout=0.21001172734764773
+  batch_size=32
+  window_length=125 latent frames
+--- Results ---
+  Best val CER    : 227.09%
+  Test CER         : 103.93%
+  Test IER         : 82.48%
+  Test DER         : 6.04%
+  Test SER         : 15.40%
+#################################################
