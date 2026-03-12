@@ -16,7 +16,8 @@ Key flags:
     --epochs         Number of training epochs           (default: 150)
     --batch-size     Batch size                          (default: 32)
     --window-length  Latent frames per window            (default: 125, ≈ 4 s @ 32 ms)
-    --hdf5-path      Path to latent HDF5 file            (default: data/preprocessed/emg_latent_ae_v2.hdf5)
+    --data-dir       Directory containing latent HDF5 files  (default: data/preprocessed/)
+    --latent-config  YAML defining train/val/test split       (default: config/user/latent_split_placeholder.yaml)
     --resume         Path to a checkpoint .pt to continue training
     --from-hyperparams  YAML file of hyperparameters (from hyperparam_tuner_latent.py)
     --early-stopping-patience  Stop if val CER doesn't improve for N epochs (0 = disabled)
@@ -196,9 +197,12 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # Data
-    p.add_argument("--hdf5-path", type=Path,
-                   default=_ROOT / "data" / "preprocessed" / "emg_latent_ae_v2.hdf5",
-                   help="Path to the latent EMG HDF5 file")
+    p.add_argument("--data-dir", type=Path,
+                   default=_ROOT / "data" / "89335547_latent",
+                   help="Directory containing latent HDF5 session files")
+    p.add_argument("--latent-config", type=Path,
+                   default=_ROOT / "config" / "user" / "single_user.yaml",
+                   help="YAML file defining train/val/test latent session split (same format as raw)")
     p.add_argument("--checkpoint-dir", type=Path,
                    default=Path(__file__).resolve().parent / "checkpoints",
                    help="Directory to write model checkpoints")
@@ -268,7 +272,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     print("Building data loaders …")
     loaders = get_latent_dataloaders(
-        hdf5_path=args.hdf5_path,
+        data_dir=args.data_dir,
+        config_path=args.latent_config,
         window_length=args.window_length,
         batch_size=args.batch_size,
         num_workers=args.num_workers,

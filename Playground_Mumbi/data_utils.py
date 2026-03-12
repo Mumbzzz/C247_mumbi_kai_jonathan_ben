@@ -563,57 +563,79 @@ class LatentEMGDataset(torch.utils.data.Dataset):
 
 
 def get_latent_dataloaders(
-    hdf5_path: Path,
+    data_dir: Path,
+    config_path: Path,
     window_length: int = 125,
     stride: Optional[int] = None,
     batch_size: int = 32,
     num_workers: int = 0,
+    train_fraction: float = 1.0,
 ) -> dict[str, DataLoader]:
-    """Build train / val / test DataLoaders for a single latent HDF5 file.
+    """Build train / val / test DataLoaders from a latent session split YAML.
 
-    Splits the session temporally: 70 % train → 15 % val → 15 % test.
-
-    .. note::
-        This is a single-file split suitable for the current single HDF5 file.
-        When the full multi-file latent dataset is ready, update this function
-        to accept a list of paths and assign files to splits — the rest of
-        ``train_latent.py`` stays unchanged.
+    Mirrors the raw ``get_dataloaders`` pattern: reads a YAML file listing
+    session names per split, resolves each to
+    ``<data_dir>/<user>/<session>_latent_v2.hdf5``, and concatenates all
+    sessions in each split into a single dataset.
 
     Args:
-        hdf5_path:     Path to the latent HDF5 file.
+        data_dir:      Directory containing latent HDF5 files
+                       (e.g. ``data/preprocessed``).
+        config_path:   Path to the split YAML (e.g.
+                       ``config/user/latent_split_placeholder.yaml``).
         window_length: Latent frames per sample (default 125 ≈ 4 s at 32 ms/frame).
         stride:        Stride between windows; defaults to ``window_length``.
         batch_size:    Batch size for train and val. Test always uses batch_size=1.
         num_workers:   DataLoader workers (0 = main process).
+        train_fraction: Fraction of training windows to use (0.0, 1.0].
 
     Returns:
         Dict with keys ``'train'``, ``'val'``, ``'test'`` → DataLoader.
     """
-    with h5py.File(hdf5_path, "r") as f:
-        total_frames = f["emg2qwerty"]["latent"].shape[0]
+    assert 0.0 < train_fraction <= 1.0
 
-    n_train = int(0.70 * total_frames)
-    n_val   = int(0.15 * total_frames)
-    n_test  = total_frames - n_train - n_val
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
 
-    train_dataset = LatentEMGDataset(
-        hdf5_path, window_length=window_length, stride=stride,
-        frame_start=0,               frame_end=n_train,               jitter=True,
-    )
-    val_dataset = LatentEMGDataset(
-        hdf5_path, window_length=window_length, stride=stride,
-        frame_start=n_train,         frame_end=n_train + n_val,       jitter=False,
-    )
-    test_dataset = LatentEMGDataset(
-        hdf5_path, window_length=window_length, stride=stride,
-        frame_start=n_train + n_val, frame_end=total_frames,          jitter=False,
-    )
+    def _resolve_paths(split: str) -> list[Path]:
+        paths = []
+        for entry in cfg["dataset"].get(split, []):
+            p = data_dir / f"{entry['session']}_latent_v2.hdf5"  # same session names as raw, latent suffix appended
+            if not p.exists():
+                raise FileNotFoundError(f"Latent HDF5 not found: {p}")
+            paths.append(p)
+        return paths
+
+    train_paths = _resolve_paths("train")
+    val_paths   = _resolve_paths("val")
+    test_paths  = _resolve_paths("test")
+
+    train_dataset: torch.utils.data.Dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=True)
+        for p in train_paths
+    ])
+
+    n_total = len(train_dataset)
+    if train_fraction < 1.0:
+        n_subset = max(1, int(train_fraction * n_total))
+        print(f"  train_fraction={train_fraction:.2f}: using {n_subset} / {n_total} training windows")
+        train_dataset = Subset(train_dataset, list(range(n_subset)))
+    else:
+        print(f"  train_fraction=1.00: using all {n_total} training windows")
+
+    val_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=False)
+        for p in val_paths
+    ])
+    test_dataset = ConcatDataset([
+        LatentEMGDataset(p, window_length=window_length, stride=stride, jitter=False)
+        for p in test_paths
+    ])
 
     print(
-        f"Latent split — total frames: {total_frames}"
-        f" | train: {n_train} ({len(train_dataset)} windows)"
-        f" | val: {n_val} ({len(val_dataset)} windows)"
-        f" | test: {n_test} ({len(test_dataset)} windows)"
+        f"Latent split — train sessions: {len(train_paths)}"
+        f" | val sessions: {len(val_paths)}"
+        f" | test sessions: {len(test_paths)}"
     )
 
     persistent = num_workers > 0
