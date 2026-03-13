@@ -14,7 +14,7 @@ baseline_biophys_aug_cer = 24.45
 
 rnn_color = '#8BB8E8'
 rnn_full_cer = 18.24
-rnn_latent_cer = 104.03
+rnn_latent_cer = 99.9
 rnn_biophys_aug_cer = 22.76
 
 hybrid_color =  '#00A5E0'
@@ -24,10 +24,10 @@ hybrid_biophys_aug_cer = 21.39
 
 conformer_color = '#003B5C'
 conformer_full_cer = 14.1
-conformer_latent_cer = 84.95
+conformer_latent_cer = 45.5
 conformer_biophys_aug_cer = 15.89
 
-models      = ['Baseline', 'RNN', 'Hybrid', 'Conformer']
+models      = ['Baseline', 'RNN w/BiLSTM', 'CNN w/BiLSTM', 'Conformer']
 colors      = [baseline_color, rnn_color, hybrid_color, conformer_color]
 edge_colors = ['#B89800', '#5A88C8', '#007EAD', '#001F3D']
 
@@ -64,7 +64,7 @@ plt.rcParams.update({
 })
 
 # --- DEFINE AXIS LIMITS FIRST ---
-top_ylim = (60, 105)
+top_ylim = (35, 100)
 bot_ylim = (13, 26)
 
 # Provide manual height ratios to compress the top and expand the bottom
@@ -112,7 +112,7 @@ for ax in [ax_top, ax_bot]:
                 if cer > 30: top_break_x.append(xpos)
                 
             # Only draw the label on the axis where the top of the bar actually ends
-            if ax == ax_top and cer > 60:
+            if ax == ax_top and cer > top_ylim[0]:
                 # Target the tallest bar specifically (RNN Model is m_idx == 1, Latent AE is cond_idx == 1)
                 if m_idx == 1 and cond_idx == 1:
                     ax.text(xpos_for_label-0.28, cer - 10, f'{cer:.1f}%', ha='center', va='bottom',
@@ -193,7 +193,7 @@ ax_bot.set_xticks(x)
 ax_bot.set_xticklabels(models, fontsize=12)
 
 # Set the y-axis label to straddle both plots nicely
-fig.supylabel('Character Error Rate (%)', fontsize=12, x=0.04)
+fig.supylabel('Character Error Rate, CER (%)', fontsize=12, x=0.04)
 
 out_path = 'results/cer_figures/cer_comparison.png' # Github path
 # out_path = 'cer_comparison.png' # Colab testing path

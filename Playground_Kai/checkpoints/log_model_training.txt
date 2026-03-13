@@ -1070,3 +1070,30 @@ Total train time: 00:35:59 (2159.5s)
   Test DER         : 27.26%
   Test SER         : 69.47%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_2323hrs
+Model           : conformer
+Pipeline        : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)
+Device          : cuda
+Parameters      : 1,838,787
+Epochs planned  : 500  |  Epochs completed: 327
+Total train time: 01:33:37 (5617.2s)
+--- Hyperparameters ---
+  lr=0.00019507909391463466
+  weight_decay=0.08390371023105112
+  proj_dim=64
+  d_model=192
+  num_heads=8
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.1880331025417285
+  batch_size=32
+  window_length=500
+--- Results ---
+  Best val CER    : 72.82%
+  Test CER         : 170.99%
+  Test IER         : 4.14%
+  Test DER         : 102.18%
+  Test SER         : 64.67%
+#################################################
