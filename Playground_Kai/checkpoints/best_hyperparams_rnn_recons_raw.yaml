@@ -1,0 +1,17 @@
+lr: 0.0008215117598353862
+weight_decay: 0.00935611311371853
+proj_dim: 64
+hidden_size: 256
+num_layers: 1
+dropout: 0.11750003567529757
+trial_val_cer: 98.469
+pipeline: recons-raw
+search_mode: two-phase
+search_phase_found: F1
+num_coarse_trials: 20
+num_fine_trials: 10
+coarse_epochs: 12
+fine_epochs: 12
+num_trial_sessions: 8
+fine_shrink: 3.0
+tuned_at: '2026-03-12 17:31:07'

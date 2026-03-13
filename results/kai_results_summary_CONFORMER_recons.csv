@@ -1,0 +1,2 @@
+run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
+CONFORMER_32ch_63hz_89pct_20260312_160005,2026-03-12 16:45:18,CONFORMER,150,32,63,0.8861638130495141,raw_channels,1.1042353133360545,5.012489676475525,80.80763257155536,84.95092693565977,2712.428657200071,recons

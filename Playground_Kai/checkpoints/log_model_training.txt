@@ -1018,3 +1018,55 @@ Total train time: 00:10:49 (649.2s)
   Test DER         : 15.59%
   Test SER         : 52.67%
 #################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1645hrs
+Model           : conformer
+Pipeline        : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)
+Device          : cuda
+Parameters      : 1,838,787
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 00:45:12 (2712.4s)
+--- Hyperparameters ---
+  lr=0.00019507909391463466
+  weight_decay=0.08390371023105112
+  proj_dim=64
+  d_model=192
+  num_heads=8
+  conv_kernel_size=31
+  num_layers=2
+  dropout=0.1880331025417285
+  batch_size=32
+  window_length=500
+--- Results ---
+  Best val CER    : 72.93%
+  Test CER         : 84.95%
+  Test IER         : 16.01%
+  Test DER         : 14.68%
+  Test SER         : 54.26%
+#################################################
+
+################### New Entry ###################
+Run timestamp   : 20260312_1807hrs
+Model           : rnn
+Pipeline        : recons-raw (data_recons/, raw channels 16ch×2, 62.5 Hz)
+Device          : cuda
+Parameters      : 842,563
+Epochs planned  : 150  |  Epochs completed: 150
+Total train time: 00:35:59 (2159.5s)
+--- Hyperparameters ---
+  lr=0.0008215117598353862
+  weight_decay=0.00935611311371853
+  proj_dim=64
+  hidden_size=256
+  num_layers=1
+  dropout=0.11750003567529757
+  batch_size=32
+  window_length=500
+--- Results ---
+  Best val CER    : 78.34%
+  Test CER         : 104.03%
+  Test IER         : 7.31%
+  Test DER         : 27.26%
+  Test SER         : 69.47%
+#################################################

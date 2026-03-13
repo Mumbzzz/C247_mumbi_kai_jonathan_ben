@@ -118,6 +118,8 @@ def evaluate(
     loader,
     device: torch.device,
     decoder: CTCGreedyDecoder,
+    preview_limit: int = 0,
+    preview_split: str = "",
 ) -> tuple[float, dict[str, float]]:
     """Evaluate the model on a DataLoader.
 
@@ -129,6 +131,7 @@ def evaluate(
     total_loss = 0.0
     criterion = nn.CTCLoss(blank=charset().null_class, zero_infinity=True)
     cer_metric = CharacterErrorRates()
+    preview_rows: list[tuple[str, str]] = []
 
     for batch in loader:
         inputs = batch["inputs"].to(device)
@@ -157,8 +160,17 @@ def evaluate(
         for i, pred in enumerate(preds):
             target = LabelData.from_labels(targets_np[: tgt_lens[i], i])
             cer_metric.update(prediction=pred, target=target)
+            if preview_limit > 0 and len(preview_rows) < preview_limit:
+                pred_text = pred.text if hasattr(pred, "text") else str(pred)
+                preview_rows.append((target.text, pred_text))
 
     metrics = cer_metric.compute()
+    if preview_rows:
+        split_name = preview_split or "eval"
+        print(f"\nSample {split_name} predictions (first {len(preview_rows)}):")
+        for idx, (target_text, pred_text) in enumerate(preview_rows, 1):
+            print(f"  [{idx}] true: {target_text}")
+            print(f"      pred: {pred_text}")
     return total_loss / max(len(loader), 1), metrics
 
 
@@ -240,6 +252,8 @@ def parse_args() -> argparse.Namespace:
                    help="YAML file of hyperparameters (e.g. from hyperparam_tuner_recons.py)")
     p.add_argument("--notes", type=str, default="",
                    help="Free-text annotation written to the CSV log")
+    p.add_argument("--show-examples", type=int, default=5,
+                   help="Number of sample target/prediction pairs to print during test evaluation (0 to disable)")
     return p.parse_args()
 
 
@@ -347,7 +361,14 @@ def main() -> None:
         saved_cer   = ckpt.get("best_cer", float("nan"))
         print(f"Loaded checkpoint — epoch {saved_epoch + 1 if isinstance(saved_epoch, int) else saved_epoch}  val CER={saved_cer:.2f}%")
         print("\n--- Test Evaluation ---")
-        _, test_metrics = evaluate(model, loaders["test"], device, CTCGreedyDecoder())
+        _, test_metrics = evaluate(
+            model,
+            loaders["test"],
+            device,
+            CTCGreedyDecoder(),
+            preview_limit=args.show_examples,
+            preview_split="test",
+        )
         print("Test metrics:")
         for k, v in test_metrics.items():
             print(f"  {k}: {v:.2f}%")
@@ -499,7 +520,14 @@ def main() -> None:
     total_training_time = time.perf_counter() - train_start_time
     total_time_str = time.strftime("%H:%M:%S", time.gmtime(total_training_time))
 
-    _, test_metrics = evaluate(model, loaders["test"], device, decoder)
+    _, test_metrics = evaluate(
+        model,
+        loaders["test"],
+        device,
+        decoder,
+        preview_limit=args.show_examples,
+        preview_split="test",
+    )
     print("Test metrics:")
     for k, v in test_metrics.items():
         print(f"  {k}: {v:.2f}%")

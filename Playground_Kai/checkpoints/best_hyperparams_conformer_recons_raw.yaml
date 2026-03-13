@@ -1,19 +1,19 @@
-lr: 0.0004359400788954502
-weight_decay: 0.022563110735889107
+lr: 0.00019507909391463466
+weight_decay: 0.08390371023105112
 proj_dim: 64
-d_model: 256
-num_heads: 4
+d_model: 192
+num_heads: 8
 num_layers: 2
-conv_kernel_size: 15
-dropout: 0.29458848566560497
-trial_val_cer: 100.0
+conv_kernel_size: 31
+dropout: 0.1880331025417285
+trial_val_cer: 91.1471
 pipeline: recons-raw
 search_mode: two-phase
-search_phase_found: C
-num_coarse_trials: 2
-num_fine_trials: 0
-coarse_epochs: 6
-fine_epochs: 6
+search_phase_found: F1
+num_coarse_trials: 20
+num_fine_trials: 10
+coarse_epochs: 12
+fine_epochs: 12
 num_trial_sessions: 8
 fine_shrink: 3.0
-tuned_at: '2026-03-12 14:29:09'
+tuned_at: '2026-03-12 15:59:31'
