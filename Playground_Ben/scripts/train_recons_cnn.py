@@ -4,14 +4,10 @@ The reconstructed files contain AE-decoded EMG signals at 62.5 Hz (16 ms/frame)
 with the same 16-electrode layout as the originals but stored as plain float32
 arrays (not the structured numpy dtype of the raw HDF5 files).
 
-Schema per session file:
-    emg2qwerty/timeseries/emg_left  : (T, 16) float32
-    emg2qwerty/timeseries/emg_right : (T, 16) float32
-    emg2qwerty/timeseries/time      : (T,)    float64
-    emg2qwerty attrs                : keystrokes (JSON)
-
-Input to model: (T, N, 32)  — left and right channels flattened per frame
-All 18 sessions are available (vs 17 for latent_v2).
+Data loading is handled by Playground_Ben/recons_data_utils.py, which mirrors
+the API of Playground_Kai/data_utils.py.  The loader outputs batches of shape
+(T, N, 2, 16) — identical band/channel layout to the raw pipeline but at
+62.5 Hz rather than 2000 Hz.
 
 Results are appended to results/results_summary_CNN.csv with
 notes="reconstructed_emg_cnn" — existing rows are never overwritten.
@@ -24,28 +20,25 @@ Run from repo root:
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 import time
 from pathlib import Path
 
-import h5py
 import torch
-import yaml
 from torch import nn
-from torch.utils.data import DataLoader
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from emg2qwerty.charset import charset
-from emg2qwerty.data import LabelData, WindowedEMGDataset
+from emg2qwerty.data import LabelData
 from emg2qwerty.decoder import CTCGreedyDecoder
 from emg2qwerty.metrics import CharacterErrorRates
 from emg2qwerty.modules import TDSConvEncoder
 
+from Playground_Ben.recons_data_utils import get_recons_dataloaders
 from scripts.logger import log_epoch, log_summary, make_run_id
 
 # ---------------------------------------------------------------------------
@@ -58,83 +51,14 @@ IN_FEATURES:        int = NUM_BANDS * ELECTRODE_CHANNELS  # 32 per frame
 
 
 # ---------------------------------------------------------------------------
-# Dataset — preloaded in RAM for fast random access
-# ---------------------------------------------------------------------------
-
-class ReconstructedEMGDataset(torch.utils.data.Dataset):
-    """Windowed dataset over AE-reconstructed EMG (_recons_v3.hdf5) files.
-
-    Preloads all sessions into RAM at init to avoid repeated HDF5 seeks
-    during shuffled training. 18 sessions × ~74k frames × 32 floats ≈ 340 MB.
-
-    Each item is a (window_length, 32) float32 tensor (left+right stacked).
-    """
-
-    def __init__(
-        self,
-        paths: list[Path],
-        window_length: int,
-        stride: int,
-        jitter: bool,
-    ) -> None:
-        self.window_length = window_length
-        self.stride        = stride
-        self.jitter        = jitter
-
-        self._sessions: list[tuple[torch.Tensor, list, list]] = []
-        self._windows:  list[tuple[int, int]] = []  # (session_idx, frame_offset)
-
-        for p in paths:
-            with h5py.File(p, "r") as f:
-                ts    = f["emg2qwerty"]["timeseries"]
-                left  = ts["emg_left"][:].astype("float32")   # (T, 16)
-                right = ts["emg_right"][:].astype("float32")  # (T, 16)
-                times = ts["time"][:].tolist()
-                ks    = json.loads(f["emg2qwerty"].attrs.get("keystrokes", "[]"))
-
-            # Stack and flatten: (T, 32)
-            data = torch.from_numpy(
-                __import__("numpy").concatenate([left, right], axis=1)
-            )
-            sess_idx = len(self._sessions)
-            self._sessions.append((data, times, ks))
-
-            n_frames = data.shape[0]
-            for offset in range(0, n_frames - window_length + 1, stride):
-                self._windows.append((sess_idx, offset))
-
-    def __len__(self) -> int:
-        return len(self._windows)
-
-    def __getitem__(self, idx: int):
-        sess_idx, offset = self._windows[idx]
-        data, times, ks = self._sessions[sess_idx]
-
-        if self.jitter:
-            max_jitter = min(self.stride, data.shape[0] - self.window_length - offset)
-            if max_jitter > 0:
-                offset += int(torch.randint(0, max_jitter, (1,)).item())
-
-        window  = data[offset : offset + self.window_length]   # (T, 32)
-        start_t = times[offset]
-        end_t   = times[offset + self.window_length - 1]
-
-        label_data = LabelData.from_keystrokes(ks, start_t, end_t)
-        labels = torch.as_tensor(label_data.labels, dtype=torch.long)
-        return window, labels
-
-    collate = staticmethod(WindowedEMGDataset.collate)
-
-
-# ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 
 class ReconsTDSConvCTC(nn.Module):
     """TDSConvCTC for reconstructed EMG input.
 
-    Input shape: (T, N, 32)  — 16 left + 16 right channels per frame.
-    Projects to num_features, then TDSConvEncoder + CTC head.
+    Input shape: (T, N, 2, 16) — loader output from recons_data_utils.
+    Flattened to (T, N, 32), projected to num_features, then TDSConvEncoder.
     """
 
     def __init__(
@@ -150,6 +74,7 @@ class ReconsTDSConvCTC(nn.Module):
         num_features = max(bc, round(num_features / bc) * bc)
 
         self.model = nn.Sequential(
+            nn.Flatten(start_dim=2),          # (T, N, 2, 16) → (T, N, 32)
             nn.Linear(in_features, num_features),
             nn.ReLU(),
             TDSConvEncoder(
@@ -254,58 +179,6 @@ def evaluate(model, loader, device, decoder):
 
 
 # ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-def _build_loaders(
-    config_path: Path,
-    data_root: Path,
-    window_length: int,
-    stride: int,
-    batch_size: int,
-    num_workers: int,
-) -> dict[str, DataLoader]:
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-
-    split_paths: dict[str, list[Path]] = {"train": [], "val": [], "test": []}
-    missing: list[str] = []
-
-    for split, entries in cfg["dataset"].items():
-        for e in entries:
-            p = data_root / f'{e["session"]}_recons_v3.hdf5'
-            if p.exists():
-                split_paths[split].append(p)
-            else:
-                missing.append(f"  {split}: {p.name}")
-
-    if missing:
-        print(f"WARNING — {len(missing)} file(s) not found, skipping:")
-        for m in missing:
-            print(m)
-
-    print("Preloading reconstructed EMG into RAM...", flush=True)
-    train_ds = ReconstructedEMGDataset(split_paths["train"], window_length, stride,        jitter=True)
-    val_ds   = ReconstructedEMGDataset(split_paths["val"],   window_length, window_length, jitter=False)
-    test_ds  = ReconstructedEMGDataset(split_paths["test"],  window_length, window_length, jitter=False)
-    print("Done.", flush=True)
-
-    collate    = ReconstructedEMGDataset.collate
-    persistent = num_workers > 0
-    return {
-        "train": DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                            num_workers=num_workers, collate_fn=collate,
-                            pin_memory=True, persistent_workers=persistent),
-        "val":   DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
-                            num_workers=num_workers, collate_fn=collate,
-                            pin_memory=True, persistent_workers=persistent),
-        "test":  DataLoader(test_ds,  batch_size=1,          shuffle=False,
-                            num_workers=num_workers, collate_fn=collate,
-                            pin_memory=True, persistent_workers=persistent),
-    }
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -341,13 +214,14 @@ def main():
     print(f"Device:      {device}")
     print(f"in_features: {IN_FEATURES}  ({NUM_BANDS} bands × {ELECTRODE_CHANNELS} channels)")
 
-    loaders = _build_loaders(
-        config_path=args.config,
+    loaders = get_recons_dataloaders(
         data_root=args.data_root,
+        config_path=args.config,
         window_length=args.window_length,
         stride=args.stride,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        test_window_length=args.window_length,
     )
     print(
         f"Dataset  — train: {len(loaders['train'].dataset):,} windows"

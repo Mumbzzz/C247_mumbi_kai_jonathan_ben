@@ -1,2 +1,3 @@
 run_id,timestamp,model,epochs,num_channels,sampling_rate_hz,train_fraction,input_type,final_train_loss,final_val_loss,final_val_cer,test_cer,training_time_sec,notes
 CNN_32ch_63hz_100pct_20260312_101144,2026-03-12 10:58:33,CNN,150,32,63,1.0,reconstructed_emg_v3,1.2501889844735463,4.048086030142648,83.32962880640142,81.96257615317668,2808.9961862564087,reconstructed_emg_cnn
+CNN_32ch_63hz_100pct_20260312_123950,2026-03-12 12:40:24,CNN,1,32,63,1.0,reconstructed_emg_v3,3.70371848027823,3.2766390791479147,100.0,100.0,34.2367742061615,reconstructed_emg_cnn

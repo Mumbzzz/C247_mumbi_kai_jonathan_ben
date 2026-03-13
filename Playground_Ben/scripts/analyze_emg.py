@@ -321,38 +321,34 @@ def plot_fft_heatmap(emg_l, emg_r, out_path: Path) -> None:
 # ── figure 3: cross-correlation matrix ───────────────────────────────────────
 
 def plot_crosscorr_matrix(emg_l, emg_r, out_path: Path) -> None:
-    """Pearson correlation matrix for both bands side by side."""
+    """Pearson correlation matrix for both bands side by side, shared colorbar."""
     n_ch = emg_l.shape[1]
     labels = [f"{i+1}" for i in range(n_ch)]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Cross-Correlation Matrix (Pearson) Between Electrode Channels", fontsize=13)
+    fig = plt.figure(figsize=(18, 8))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 0.06], wspace=0.35)
+    ax_l = fig.add_subplot(gs[0])
+    ax_r = fig.add_subplot(gs[1])
+    cax  = fig.add_subplot(gs[2])
 
     for ax, emg, title in [
-        (axes[0], emg_r, "Right hand"),
-        (axes[1], emg_l, "Left hand"),
+        (ax_l, emg_l, "Left hand"),
+        (ax_r, emg_r, "Right hand"),
     ]:
         corr = np.corrcoef(emg.T)  # (C, C)
-
-        im = ax.imshow(corr, vmin=0, vmax=1, cmap=CMAP_SEQ, aspect="auto")
+        im = ax.imshow(corr, vmin=0, vmax=1, cmap=CMAP_SEQ, aspect="equal")
         ax.set_xticks(range(n_ch))
-        ax.set_xticklabels(labels, rotation=90, fontsize=9)
+        ax.set_xticklabels(labels, rotation=0, fontsize=20)
         ax.set_yticks(range(n_ch))
-        ax.set_yticklabels(labels, fontsize=9)
-        ax.set_title(title)
-        ax.set_xlabel("Channel Number")
-        ax.set_ylabel("Channel Number")
+        ax.set_yticklabels(labels, fontsize=20)
+        ax.set_title(title, fontsize=26, fontweight="bold", pad=12)
+        ax.set_xlabel("Channel", fontsize=22)
+        ax.set_ylabel("Channel", fontsize=22)
 
-        # Annotate cells
-        for i in range(n_ch):
-            for j in range(n_ch):
-                val = corr[i, j]
-                ax.text(j, i, f"{val:.2f}", ha="center", va="center",
-                        fontsize=5, color="black" if abs(val) < 0.7 else "white")
+    cb = fig.colorbar(im, cax=cax)
+    cb.ax.tick_params(labelsize=20)
+    cb.set_label("Pearson r", fontsize=22)
 
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Pearson r")
-
-    plt.tight_layout()
     _save(fig, out_path)
 
 
