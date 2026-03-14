@@ -119,7 +119,7 @@ Self-contained notebooks for Kai + Jonathan's Conformer pipeline variants.
 |---|---|---|---|
 | Full raw data | 12.5% | 14.1% | [Conformer_Raw.ipynb](final_models/Conformer_Raw.ipynb) |
 | Biophysics aug | 14.29% | 15.9% | [Conformer_Biophys.ipynb](final_models/Conformer_Biophys.ipynb) |
-| Reconstructed EMG (unoptimized) | 80.8% | 85.0% | [Conformer_Recons_Unoptimized.ipynb](final_models/Conformer_Recons_Unoptimized.ipynb) |
+| Reconstructed EMG (improved) | 48.13% | 51.3%  | [../data/Conformer_Iterations_Using_AE_Data.ipynb](../data/Conformer_Iterations_Using_AE_Data.ipynb) |
 
 - Results logs are written under `results/` during training.
 

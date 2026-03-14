@@ -43,7 +43,7 @@ Just ensure that the raw data is stored in `data`, and the Latent AE data is sto
 | Full Raw Data | 18.8% | 18.2% | [RNN_Raw.ipynb](RNN_Raw.ipynb) | `results/kai_results_summary_RNN_fullraw.csv` | `results/kai_results_curves_RNN_fullraw.csv` |
 | Biophys Aug | 22.9% | 22.8% | [RNN_Biophys.ipynb](RNN_Biophys.ipynb) | `results/kai_results_summary_RNN_preprocess.csv` | `results/kai_results_curves_RNN_preprocess.csv` |
 | Latent AE (unoptimized) | 78.5% | 104.0% | [RNN_Recons_Unoptimized.ipynb](RNN_Recons_Unoptimized.ipynb) | `results/kai_results_summary_RNN_preprocess.csv` | `results/kai_results_curves_RNN_preprocess.csv` |
-| Latent AE (improved) | XX% | 99.9% | [RNN_recons.ipynb](RNN_recons.ipynb) | `archive/` | `archive/` |
+| Latent AE (improved) | 73.2% | 99.9% | [RNN_Recons.ipynb](RNN_Recons.ipynb) | `results/results_summary_RNN.csv` | `results/kai_results_curves_RNN.csv` |
 
 ---
 
@@ -60,4 +60,4 @@ Just ensure that the raw data is stored in `data`, and the Latent AE data is sto
 | Full Raw Data | 12.5% | 14.1% | [Conformer_Raw.ipynb](Conformer_Raw.ipynb) | `results/kai_results_summary_CONFORMER_fullraw.csv` | `results/kai_results_curves_CONFORMER_fullraw.csv` |
 | Biophys Aug | 14.29% | 15.9% | [Conformer_Biophys.ipynb](Conformer_Biophys.ipynb) | `results/kai_results_summary_CONFORMER_preprocess.csv` | `results/kai_results_curves_CONFORMER_preprocess.csv` |
 | Latent AE (unoptimized) | 80.8% | 85.0% | [Conformer_Recons_Unoptimized.ipynb](Conformer_Recons_Unoptimized.ipynb) | `results/kai_results_summary_CONFORMER_recons.csv` | `results/kai_results_curves_CONFORMER_recons.csv` |
-| Latent AE (improved) | XXX% | 51.3% | [../data/Conformer_Iterations_Using_AE_Data.ipynb](../data/Conformer_Iterations_Using_AE_Data.ipynb) | `archive/` | `archive/` |
+| Latent AE (improved) | 48.13% | 51.3% | [../data/Conformer_Iterations_Using_AE_Data.ipynb](../data/Conformer_Iterations_Using_AE_Data.ipynb) | `results/kai_results_summary_CONFORMER.csv` | `results/kai_results_curves_CONFORMER.csv` |
