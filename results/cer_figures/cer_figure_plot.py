@@ -14,7 +14,7 @@ baseline_biophys_aug_cer = 24.45
 
 rnn_color = '#8BB8E8'
 rnn_full_cer = 18.24
-rnn_latent_cer = 99.9
+rnn_latent_cer = 104.0
 rnn_biophys_aug_cer = 22.76
 
 hybrid_color =  '#00A5E0'
@@ -24,7 +24,7 @@ hybrid_biophys_aug_cer = 21.39
 
 conformer_color = '#003B5C'
 conformer_full_cer = 14.1
-conformer_latent_cer = 45.5
+conformer_latent_cer = 51.3
 conformer_biophys_aug_cer = 15.89
 
 models      = ['Baseline', 'RNN w/BiLSTM', 'CNN w/BiLSTM', 'Conformer']
@@ -64,7 +64,7 @@ plt.rcParams.update({
 })
 
 # --- DEFINE AXIS LIMITS FIRST ---
-top_ylim = (35, 100)
+top_ylim = (35, 105)
 bot_ylim = (13, 26)
 
 # Provide manual height ratios to compress the top and expand the bottom
