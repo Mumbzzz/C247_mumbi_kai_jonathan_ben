@@ -22,6 +22,8 @@ Colab-based CNN+LSTM runs from `training_ablation_and_cnnlstm.ipynb` (GPU: NVIDI
 
 > Requires `data/89335547/` (raw EMG, ~4.4 GB) and `data/89335547_recons_v3/` (AE-reconstructed EMG, ~125 MB), both downloaded inside the notebook via UCLA Box links.
 
+Results CSVs are in `results/`.
+
 | Data Condition | Val CER | Test CER |
 |---|---|---|
 | Spectrogram | 15.8% | 19.0% |
