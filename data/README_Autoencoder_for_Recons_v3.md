@@ -24,3 +24,7 @@ data/
 ## Output
 
 `_recons_v3.hdf5` files are the input expected by `Conformer_Iterations_Using_AE_Data.ipynb`.
+
+## Results and Figure Reference
+
+Used to derive reconstructed signal plots from Figure 6.
