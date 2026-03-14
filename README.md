@@ -12,11 +12,7 @@
 
 # Final Models & Instructions
 
-All notebooks live in [`final_models/`](final_models/). Run from the repo root with the venv active:
-```bash
-source /home/benforbes/emg2qwerty/venv/bin/activate && pip install -e .
-cd ~/C247_mumbikaijonathanben && jupyter notebook
-```
+All notebooks live in [`final_models/`](final_models/).
 
 ---
 
