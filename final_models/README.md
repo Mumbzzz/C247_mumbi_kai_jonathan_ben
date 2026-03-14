@@ -11,4 +11,3 @@ Notebooks for all final experiments.
 | [reconstructed_emg_cnn.ipynb](reconstructed_emg_cnn.ipynb) | CNN on AE-reconstructed EMG (62.5 Hz) | 83.33% | 81.96% |
 | [biophysics_pipeline_cnn.ipynb](biophysics_pipeline_cnn.ipynb) | CNN with biophysics preprocessing (Mel, 1000 Hz) | — | — |
 
-For RNN, Conformer, and CNN-LSTM notebooks see the respective `Playground_Kai/` and `Playground_Mumbi/` folders.
