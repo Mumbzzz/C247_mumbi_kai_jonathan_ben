@@ -21,3 +21,8 @@ data/
 ## Sessions
 
 16 train / 1 val / 1 test sessions, all from subject `0efbe614-9ae6-4131-9192-4398359b4f5f`.
+
+
+## Figure and Results References
+
+Figure 5 and 6, Conformer CER using AE data resulting in 51.3%.
