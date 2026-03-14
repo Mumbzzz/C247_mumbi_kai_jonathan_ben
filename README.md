@@ -10,7 +10,7 @@
 | Jonathan Gray | UCLA MAE | jonvgray@ucla.edu |
 | Benjamin Forbes | UCLA MAE | benforbes@ucla.edu |
 
-# Final Models & Instructions
+## Final Models & Instructions
 
 All notebooks live in [`final_models/`](final_models/). The submission report is in [`final_report/`](final_report/).
 
@@ -85,25 +85,43 @@ Trains TDSConvCTC with the full biophysics preprocessing pipeline (bandpass filt
 
 ---
 
-### RNN w/BiLSTM 
+### RNN w/BiLSTM
+Self-contained notebooks for Kai + Jonathan's BiLSTM pipeline variants.
 
+| Data condition | Val CER | Test CER | Notebook |
+|---|---|---|---|
+| Full raw data | 18.8% | 18.2% | [RNN_Raw.ipynb](final_models/RNN_Raw.ipynb) |
+| Biophysics aug | 22.9% | 22.8% | [RNN_Biophys.ipynb](final_models/RNN_Biophys.ipynb) |
+| Reconstructed EMG (unoptimized) | 78.5% | 104.0% | [RNN_Recons_Unoptimized.ipynb](final_models/RNN_Recons_Unoptimized.ipynb) |
 
----
-
-### Conformer 
+- Results logs are written under `results/` during training.
 
 ---
 
 ### CNN-LSTM
-Adds an LSTM layer after the TDSConvCTC encoder to capture temporal dependencies. Tested on three input types:
+Colab-based CNN+LSTM runs from Mumbi's notebook.
 
-| Model | Input | Val CER | Test CER |
+| Variant | Input | Val CER | Test CER |
 |---|---|---|---|
 | CNN+LSTM | spectrogram | 15.8% | 19.0% |
-| CNN+LSTM (biophys) | Mel spectrogram (8ch, 1kHz) | 17.9% | 21.4% |
+| CNN+LSTM (biophys) | Mel spectrogram (8ch, 1000 Hz) | 17.9% | 21.4% |
 | CNN+LSTM (recons v3) | AE-reconstructed EMG | 62.2% | 69.2% |
 
-- [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
+- Notebook: [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
+- Summary CSV: `final_models/results_summary_CNN_LSTM.csv`
+
+---
+
+### Conformer
+Self-contained notebooks for Kai + Jonathan's Conformer pipeline variants.
+
+| Data condition | Val CER | Test CER | Notebook |
+|---|---|---|---|
+| Full raw data | 12.5% | 14.1% | [Conformer_Raw.ipynb](final_models/Conformer_Raw.ipynb) |
+| Biophysics aug | 14.29% | 15.9% | [Conformer_Biophys.ipynb](final_models/Conformer_Biophys.ipynb) |
+| Reconstructed EMG (unoptimized) | 80.8% | 85.0% | [Conformer_Recons_Unoptimized.ipynb](final_models/Conformer_Recons_Unoptimized.ipynb) |
+
+- Results logs are written under `results/` during training.
 
 ---
 
