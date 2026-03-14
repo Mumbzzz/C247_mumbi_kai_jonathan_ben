@@ -1,11 +1,6 @@
 # Final Models
 
-Notebooks for all final experiments. Run from the repo root with the venv active:
-
-```bash
-source /home/benforbes/emg2qwerty/venv/bin/activate && pip install -e .
-cd ~/C247_mumbikaijonathanben && jupyter notebook
-```
+Notebooks for all final experiments. 
 
 | Notebook | Experiment | Best Val CER | Best Test CER |
 |---|---|---|---|
