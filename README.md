@@ -12,7 +12,7 @@
 
 # Final Models & Instructions
 
-All notebooks live in [`final_models/`](final_models/).
+All notebooks live in [`final_models/`](final_models/). The submission report is in [`final_report/`](final_report/).
 
 ---
 
@@ -52,6 +52,20 @@ Sweeps 2000 → 1000 → 500 → 250 → 125 Hz via anti-aliased `TemporalDownsa
 
 ---
 
+### Training Fraction Ablation (CNN)
+Sweeps training data from 25% → 100% using the same TDSConvCTC baseline (16 ch/hand, 2000 Hz, log-spectrogram):
+
+| Train Fraction | Val CER | Test CER |
+|---|---|---|
+| 25% | 28.2% | 30.1% |
+| 50% | 23.0% | 24.9% |
+| 75% | 21.1% | 22.2% |
+| 100% | 18.9% | 21.2% |
+
+- [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
+
+---
+
 ### Latent AE CNN
 Trains TDSConvCTC on pre-computed autoencoder latent vectors (1024-dim @ 62.5 Hz) from `emg_latent_ae_v2.hdf5`. Replaces the spectrogram front-end with a single linear projection.
 - [latent_ae_cnn.ipynb](final_models/latent_ae_cnn.ipynb)
@@ -80,12 +94,21 @@ Trains TDSConvCTC with the full biophysics preprocessing pipeline (bandpass filt
 
 ---
 
-### CNN-LSTM 
+### CNN-LSTM
+Adds an LSTM layer after the TDSConvCTC encoder to capture temporal dependencies. Tested on three input types:
 
+| Model | Input | Val CER | Test CER |
+|---|---|---|---|
+| CNN+LSTM | spectrogram | 15.8% | 19.0% |
+| CNN+LSTM (biophys) | Mel spectrogram (8ch, 1kHz) | 17.9% | 21.4% |
+| CNN+LSTM (recons v3) | AE-reconstructed EMG | 62.2% | 69.2% |
 
+- [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
+
+---
 
 ## Repo Notes:
 - No models/ folder from emg2qwerty, because those are large files.
-- `Playground_` folders are 
+- `Playground_` folders are individual workspaces for each team member's experimentation and development.
 - The dataset is quite a large folder (data/). I've added `*.hdf5` to `.gitignore` for now. I think its best to manually add them into your local workspace.
   - https://ucla.box.com/s/3xc4nwpfjfpo6ydjs94t0v2kuq37d5eg

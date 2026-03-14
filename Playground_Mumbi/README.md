@@ -4,10 +4,11 @@
 
 ## Overview
 
-This playground investigates three things:
-1. A **CNN+LSTM hybrid architecture** as an alternative to the TDS CNN baseline
-2. A **training data fraction ablation** on the TDS CNN to understand how much labeled data is actually needed
-3. A **CNN+LSTM trained on AE-reconstructed EMG (recons v3)** to evaluate whether autoencoder-reconstructed signals can substitute for raw EMG
+This playground investigates four things:
+1. A **training data fraction ablation** on the TDS CNN to understand how much labeled data is actually needed
+2. A **CNN+LSTM hybrid architecture** as an alternative to the TDS CNN baseline
+3. A **CNN+LSTM with biophysics preprocessing** (notch filter → bandpass → decimate → Mel spectrogram, 8 ch/wrist, 1 kHz) to assess the impact of the biophysics pipeline on the hybrid model
+4. A **CNN+LSTM trained on AE-reconstructed EMG (recons v3)** to evaluate whether autoencoder-reconstructed signals can substitute for raw EMG
 
 ---
 
@@ -66,6 +67,9 @@ Defined in `model.py`. Architecture:
 **Input:** `(T, N, 2, 16, freq)` — time-first log-spectrograms (2 wrists, 16 electrodes)
 **Output:** `(T, N, num_classes)` — log-softmax CTC emissions
 
+### CNN+LSTM with Biophysics Preprocessing
+Same CNN+LSTM architecture as above but trained via `train.py --biophys`. Applies a biophysics pipeline (notch filter → bandpass → 2× decimation → 32-bin Mel spectrogram) on 8 channels/wrist at 1000 Hz in place of the standard log-spectrogram front-end.
+
 ### CNN+LSTM on Recons v3
 Trained via `train_recons.py` on AE-reconstructed EMG from `data/89335547_recons_v3/`. Same CNN+LSTM architecture but operates on reconstructed signals (32 channels, ~62.5 Hz effective rate) with a learned linear projection in place of the standard SpectrogramNorm + MLP front-end.
 
@@ -93,6 +97,11 @@ python -m Playground_Mumbi.train --model cnn_lstm --epochs 150
 python -m Playground_Mumbi.train --model cnn_lstm --resume Playground_Mumbi/checkpoints/final_models/best_cnnlstm.pt --epochs 150
 ```
 
+### Train CNN+LSTM with biophysics preprocessing
+```bash
+python -m Playground_Mumbi.train --model cnn_lstm --biophys --epochs 150
+```
+
 ### Train CNN+LSTM on AE-reconstructed EMG (recons v3)
 ```bash
 python -m Playground_Mumbi.train_recons --epochs 150
@@ -103,7 +112,7 @@ python -m Playground_Mumbi.train_recons --epochs 150
 python -m Playground_Mumbi.train_recons --resume Playground_Mumbi/checkpoints/final_models/best_cnnlstm_recons_v3.pt --epochs 150
 ```
 
-### Run training fraction ablation (10%, 25%, 50%, 75%, 100%)
+### Run training fraction ablation (25%, 50%, 75%, 100%)
 ```bash
 python -m Playground_Mumbi.train --run-all-fractions
 ```
