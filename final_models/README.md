@@ -63,3 +63,11 @@ Just ensure that the raw data is stored in `data`, and the Latent AE data is sto
 | Biophys Aug | 14.29% | 15.9% | [Conformer_Biophys.ipynb](Conformer_Biophys.ipynb) | `results/kai_results_summary_CONFORMER_preprocess.csv` | `results/kai_results_curves_CONFORMER_preprocess.csv` |
 | Latent AE (unoptimized) | 80.8% | 85.0% | [Conformer_Recons_Unoptimized.ipynb](Conformer_Recons_Unoptimized.ipynb) | `results/kai_results_summary_CONFORMER_recons.csv` | `results/kai_results_curves_CONFORMER_recons.csv` |
 | Latent AE (improved) | 48.13% | 51.3% | [../data/Conformer_Iterations_Using_AE_Data.ipynb](../data/Conformer_Iterations_Using_AE_Data.ipynb) | `results/kai_results_summary_CONFORMER.csv` | `results/kai_results_curves_CONFORMER.csv` |
+
+## Autoencoder Notebooks
+
+| Notebook | Scope | Val Recon Loss | MSE (mean / rest / keystroke) | Notebook Link | Notes |
+| ---- | ---- | ---- | ---- | ---- | ---- |
+| Autoencoder for Recons v3 | Per-session AE (18 sessions) | ~0.10 (after 80 epochs) | — | [Autoencoder_for_Recons_v3.ipynb](../data/Autoencoder_for_Recons_v3.ipynb) | Trains one AE per session; outputs `_recons_v3.hdf5` used by Conformer AE notebooks |
+| Autoencoder Playground | Single-session AE (2021-07-22) | 2.07 (epoch 20 val recon) | 0.214 / 0.202 / 0.241 | [emg_autoencoder_playground.ipynb](../data/emg_autoencoder_playground.ipynb) | Spectral loss (λ=10), latent dim=256, 1.15M params; keystroke windows have higher MSE than rest |
+
