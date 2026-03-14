@@ -108,7 +108,7 @@ Colab-based CNN+LSTM runs from Mumbi's notebook.
 | CNN+LSTM (recons v3) | AE-reconstructed EMG | 62.2% | 69.2% |
 
 - Notebook: [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
-- Summary CSV: `final_models/results_summary_CNN_LSTM.csv`
+- Results logs are written under `results/` during training.
 
 ---
 
