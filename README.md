@@ -10,6 +10,15 @@
 | Jonathan Gray | UCLA MAE | jonvgray@ucla.edu |
 | Benjamin Forbes | UCLA MAE | benforbes@ucla.edu |
 
+# Final Models & Instructions
+- Baseline:
+  - XX% CER
+    - [Link to ipynb](https://www.markdownguide.org)
+  - XX% CER (ablation)
+    - Link
+- RNN w/BiLSTM
+  - etc.
+
 
 ## Repo Notes:
 - No models/ folder from emg2qwerty, because those are large files.
