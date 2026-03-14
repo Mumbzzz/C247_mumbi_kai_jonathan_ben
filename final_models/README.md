@@ -9,7 +9,7 @@ Notebooks for all final experiments.
 | [baseline_cnn.ipynb](baseline_cnn.ipynb) | CNN — 16 ch/hand, 2000 Hz, log-spectrogram | 18.52% | 22.28% |
 | [channel_ablation.ipynb](channel_ablation.ipynb) | CNN channel ablation (16 / 8 / 4 / 2 ch) | 18.52% (16 ch) | 22.28% |
 | [temporal_downsampling_ablation.ipynb](temporal_downsampling_ablation.ipynb) | CNN temporal ablation (2000–125 Hz) | 18.52% (2000 Hz) | 22.28% |
-| [training_ablation_and_cnnlstm.ipynb](training_ablation_and_cnnlstm.ipynb) | CNN — 16 ch/hand, 2000 Hz, log-spectrogram, training fraction ablation (25–100%) | 18.9% (100%) | 21.2% |
+| [training_fraction_ablation.ipynb](training_fraction_ablation.ipynb) | CNN training fraction ablation (25–100%) | 18.9% (100%) | 21.2% |
 | [latent_ae_cnn.ipynb](latent_ae_cnn.ipynb) | CNN on AE latent vectors (1024-dim @ 62.5 Hz) | — | — |
 | [reconstructed_emg_cnn.ipynb](reconstructed_emg_cnn.ipynb) | CNN on AE-reconstructed EMG (62.5 Hz) | 83.33% | 81.96% |
 | [biophysics_pipeline_cnn.ipynb](biophysics_pipeline_cnn.ipynb) | CNN with biophysics preprocessing (Mel, 1000 Hz) | — | — |
@@ -18,9 +18,9 @@ Notebooks for all final experiments.
 
 ## CNN w/BiLSTM (Mumbi)
 
-Colab-based CNN+LSTM runs from `training_ablation_and_cnnlstm.ipynb` (GPU: NVIDIA L4).
+Runs from [`cnn_lstm.ipynb`](cnn_lstm.ipynb) (GPU: NVIDIA L4). Works in Google Colab and locally.
 
-> Requires `data/89335547/` (raw EMG, ~4.4 GB) and `data/89335547_recons_v3/` (AE-reconstructed EMG, ~125 MB), both downloaded inside the notebook via UCLA Box links.
+> Requires `data/89335547/` (raw EMG, ~4.4 GB) and `data/89335547_recons_v3/` (AE-reconstructed EMG, ~125 MB), downloaded automatically in Colab or manually for local runs.
 
 Results CSVs are in `results/`.
 

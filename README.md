@@ -62,7 +62,7 @@ Sweeps training data from 25% → 100% using the same TDSConvCTC baseline (16 ch
 | 75% | 21.1% | 22.2% |
 | 100% | 18.9% | 21.2% |
 
-- [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
+- [training_fraction_ablation.ipynb](final_models/training_fraction_ablation.ipynb)
 
 ---
 
@@ -107,7 +107,7 @@ Colab-based CNN+LSTM runs from Mumbi's notebook.
 | CNN+LSTM (biophys) | Mel spectrogram (8ch, 1000 Hz) | 17.9% | 21.4% |
 | CNN+LSTM (recons v3) | AE-reconstructed EMG | 62.2% | 69.2% |
 
-- Notebook: [training_ablation_and_cnnlstm.ipynb](final_models/training_ablation_and_cnnlstm.ipynb)
+- Notebook: [cnn_lstm.ipynb](final_models/cnn_lstm.ipynb)
 - Results logs are written under `results/` during training.
 
 ---
